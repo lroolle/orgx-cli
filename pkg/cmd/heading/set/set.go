@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,12 +69,16 @@ func setRun(opts *SetOptions) error {
 		return err
 	}
 
+	if shared.IsMarkdownFile(ref.Path) {
+		return fmt.Errorf("markdown writes not yet supported (span calculation incomplete)")
+	}
+
 	content, err := os.ReadFile(ref.Path)
 	if err != nil {
 		return fmt.Errorf("read file: %w", err)
 	}
 
-	heading, err := shared.FindHeading(ref)
+	heading, err := shared.FindHeadingFromContent(ref, content)
 	if err != nil {
 		return err
 	}
@@ -98,7 +103,10 @@ func setRun(opts *SetOptions) error {
 		return nil
 	}
 
-	if opts.IO.CanPrompt() && !opts.Confirmed {
+	if !opts.Confirmed {
+		if !opts.IO.CanPrompt() {
+			return fmt.Errorf("--yes required in non-interactive mode (no TTY)")
+		}
 		fmt.Fprintln(opts.IO.ErrOut, "Changes to apply:")
 		for _, c := range changes {
 			fmt.Fprintf(opts.IO.ErrOut, "  - %s\n", c)
@@ -110,12 +118,18 @@ func setRun(opts *SetOptions) error {
 		}
 	}
 
+	info, err := os.Stat(ref.Path)
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
+	}
+	mode := info.Mode()
+
 	backupPath := ref.Path + "~" + time.Now().Format("20060102T150405")
-	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+	if err := os.WriteFile(backupPath, content, mode); err != nil {
 		return fmt.Errorf("create backup: %w", err)
 	}
 
-	if err := os.WriteFile(ref.Path, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(ref.Path, []byte(newContent), mode); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 
@@ -128,79 +142,70 @@ func setRun(opts *SetOptions) error {
 func applyChanges(content string, h *ir.Heading, opts *SetOptions) (string, []string, error) {
 	lines := strings.Split(content, "\n")
 	var changes []string
-	newContent := content
 
-	headingLine := findHeadingLine(lines, h)
-	if headingLine < 0 {
+	lineIdx := findHeadingLine(lines, h)
+	if lineIdx < 0 {
 		return "", nil, fmt.Errorf("could not locate heading in file")
 	}
 
+	currentLine := lines[lineIdx]
+
 	if opts.Todo != "" && opts.Todo != h.Todo {
-		newContent = replaceTodo(newContent, lines[headingLine], h.Todo, opts.Todo)
+		currentLine = replaceTodoInLine(currentLine, h.Todo, opts.Todo)
 		changes = append(changes, fmt.Sprintf("TODO: %s -> %s", h.Todo, opts.Todo))
 	}
 
 	if opts.Title != "" && opts.Title != h.Title {
-		newContent = replaceTitle(newContent, lines[headingLine], h.Title, opts.Title)
+		currentLine = replaceTitleInLine(currentLine, h.Title, opts.Title)
 		changes = append(changes, fmt.Sprintf("Title: %s -> %s", h.Title, opts.Title))
 	}
 
 	if len(opts.Tags) > 0 {
 		newTags := computeNewTags(h.Tags, opts.Tags)
 		if !equalTags(h.Tags, newTags) {
-			newContent = replaceTags(newContent, lines[headingLine], h.Tags, newTags)
+			currentLine = replaceTagsInLine(currentLine, h.Tags, newTags)
 			changes = append(changes, fmt.Sprintf("Tags: %v -> %v", h.Tags, newTags))
 		}
 	}
 
-	return newContent, changes, nil
+	lines[lineIdx] = currentLine
+	return strings.Join(lines, "\n"), changes, nil
 }
 
 func findHeadingLine(lines []string, h *ir.Heading) int {
-	pattern := regexp.MustCompile(`^\*+\s`)
-	for i, line := range lines {
-		if pattern.MatchString(line) && strings.Contains(line, h.Title) {
-			return i
-		}
+	idx := h.Span.Start - 1 // go-org uses 1-based line numbers
+	if idx >= 0 && idx < len(lines) {
+		return idx
 	}
 	return -1
 }
 
-func replaceTodo(content, oldLine, oldTodo, newTodo string) string {
-	var newLine string
+func replaceTodoInLine(line, oldTodo, newTodo string) string {
 	if oldTodo == "" {
 		pattern := regexp.MustCompile(`^(\*+)\s+`)
-		newLine = pattern.ReplaceAllString(oldLine, "${1} "+newTodo+" ")
-	} else {
-		newLine = strings.Replace(oldLine, " "+oldTodo+" ", " "+newTodo+" ", 1)
+		return pattern.ReplaceAllString(line, "${1} "+newTodo+" ")
 	}
-	return strings.Replace(content, oldLine, newLine, 1)
+	return strings.Replace(line, " "+oldTodo+" ", " "+newTodo+" ", 1)
 }
 
-func replaceTitle(content, oldLine, oldTitle, newTitle string) string {
-	newLine := strings.Replace(oldLine, oldTitle, newTitle, 1)
-	return strings.Replace(content, oldLine, newLine, 1)
+func replaceTitleInLine(line, oldTitle, newTitle string) string {
+	return strings.Replace(line, oldTitle, newTitle, 1)
 }
 
-func replaceTags(content, oldLine string, oldTags, newTags []string) string {
-	var newLine string
-
+func replaceTagsInLine(line string, oldTags, newTags []string) string {
 	if len(oldTags) > 0 {
 		oldTagStr := ":" + strings.Join(oldTags, ":") + ":"
 		if len(newTags) > 0 {
 			newTagStr := ":" + strings.Join(newTags, ":") + ":"
-			newLine = strings.Replace(oldLine, oldTagStr, newTagStr, 1)
-		} else {
-			newLine = strings.Replace(oldLine, " "+oldTagStr, "", 1)
+			return strings.Replace(line, oldTagStr, newTagStr, 1)
 		}
-	} else if len(newTags) > 0 {
-		newTagStr := " :" + strings.Join(newTags, ":") + ":"
-		newLine = strings.TrimRight(oldLine, " \t") + newTagStr
-	} else {
-		newLine = oldLine
+		return strings.Replace(line, " "+oldTagStr, "", 1)
 	}
-
-	return strings.Replace(content, oldLine, newLine, 1)
+	if len(newTags) > 0 {
+		newTagStr := " :" + strings.Join(newTags, ":") + ":"
+		return strings.TrimRight(line, " \t") + newTagStr
+	}
+	return line
 }
 
 func computeNewTags(oldTags []string, tagOps []string) []string {
@@ -220,10 +225,11 @@ func computeNewTags(oldTags []string, tagOps []string) []string {
 		}
 	}
 
-	var result []string
+	result := make([]string, 0, len(tags))
 	for t := range tags {
 		result = append(result, t)
 	}
+	slices.Sort(result)
 	return result
 }
 

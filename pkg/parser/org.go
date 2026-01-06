@@ -48,13 +48,14 @@ func extractOrgTitle(doc *org.Document) string {
 
 func extractOrgHeadings(path string, nodes []org.Node, lines []string) []*ir.Heading {
 	var headings []*ir.Heading
+	lineTracker := &lineTracker{lines: lines, lastLine: 0}
 
 	for _, node := range nodes {
 		if h, ok := node.(org.Headline); ok {
-			heading := convertOrgHeadline(path, h, lines)
+			heading := convertOrgHeadline(path, h, lines, lineTracker)
 			headings = append(headings, heading)
 
-			children := extractOrgHeadings(path, h.Children, lines)
+			children := extractOrgHeadingsWithTracker(path, h.Children, lines, lineTracker)
 			for _, child := range children {
 				heading.Children = append(heading.Children, child)
 			}
@@ -64,8 +65,44 @@ func extractOrgHeadings(path string, nodes []org.Node, lines []string) []*ir.Hea
 	return headings
 }
 
-func convertOrgHeadline(path string, h org.Headline, lines []string) *ir.Heading {
+type lineTracker struct {
+	lines    []string
+	lastLine int
+}
+
+func (t *lineTracker) findHeadingLine(level int, title string) int {
+	prefix := strings.Repeat("*", level) + " "
+	for i := t.lastLine; i < len(t.lines); i++ {
+		line := t.lines[i]
+		if strings.HasPrefix(line, prefix) && strings.Contains(line, title) {
+			t.lastLine = i + 1
+			return i + 1 // 1-based
+		}
+	}
+	return 0
+}
+
+func extractOrgHeadingsWithTracker(path string, nodes []org.Node, lines []string, tracker *lineTracker) []*ir.Heading {
+	var headings []*ir.Heading
+
+	for _, node := range nodes {
+		if h, ok := node.(org.Headline); ok {
+			heading := convertOrgHeadline(path, h, lines, tracker)
+			headings = append(headings, heading)
+
+			children := extractOrgHeadingsWithTracker(path, h.Children, lines, tracker)
+			for _, child := range children {
+				heading.Children = append(heading.Children, child)
+			}
+		}
+	}
+
+	return headings
+}
+
+func convertOrgHeadline(path string, h org.Headline, lines []string, tracker *lineTracker) *ir.Heading {
 	ref := buildOrgRef(path, h)
+	title := renderOrgNodes(h.Title)
 
 	props := make(map[string]string)
 	if h.Properties != nil {
@@ -76,12 +113,15 @@ func convertOrgHeadline(path string, h org.Headline, lines []string) *ir.Heading
 
 	scheduled, deadline := extractScheduling(h.Children)
 	bodyRaw := extractHeadlineBody(h)
+	links := extractOrgLinks(h.Children)
+
+	lineNum := tracker.findHeadingLine(h.Lvl, title)
 
 	return &ir.Heading{
 		Type:      ir.NodeTypeHeading,
 		Ref:       ref,
 		Level:     h.Lvl,
-		Title:     renderOrgNodes(h.Title),
+		Title:     title,
 		Todo:      h.Status,
 		Tags:      h.Tags,
 		Props:     props,
@@ -90,10 +130,81 @@ func convertOrgHeadline(path string, h org.Headline, lines []string) *ir.Heading
 		Body: ir.Body{
 			Raw: bodyRaw,
 		},
+		Links: links,
 		Span: ir.Span{
-			Start: h.Index,
-			End:   h.Index,
+			Start: lineNum,
+			End:   lineNum,
 		},
+	}
+}
+
+func extractOrgLinks(nodes []org.Node) []*ir.Link {
+	var links []*ir.Link
+	for _, node := range nodes {
+		extractLinksFromNode(node, &links)
+	}
+	return links
+}
+
+func extractLinksFromNode(node org.Node, links *[]*ir.Link) {
+	switch v := node.(type) {
+	case org.RegularLink:
+		link := convertOrgLink(v)
+		if link != nil {
+			*links = append(*links, link)
+		}
+	case org.Paragraph:
+		for _, child := range v.Children {
+			extractLinksFromNode(child, links)
+		}
+	case org.List:
+		for _, item := range v.Items {
+			extractLinksFromNode(item, links)
+		}
+	case org.ListItem:
+		for _, child := range v.Children {
+			extractLinksFromNode(child, links)
+		}
+	case org.Table:
+		for _, row := range v.Rows {
+			for _, col := range row.Columns {
+				for _, child := range col.Children {
+					extractLinksFromNode(child, links)
+				}
+			}
+		}
+	}
+}
+
+func convertOrgLink(l org.RegularLink) *ir.Link {
+	var kind ir.LinkKind
+	switch l.Protocol {
+	case "file":
+		kind = ir.LinkKindFile
+	case "id":
+		kind = ir.LinkKindID
+	case "http", "https":
+		kind = ir.LinkKindHTTP
+	case "":
+		if strings.HasPrefix(l.URL, "./") || strings.HasPrefix(l.URL, "../") || strings.HasSuffix(l.URL, ".org") || strings.HasSuffix(l.URL, ".md") {
+			kind = ir.LinkKindFile
+		} else {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	desc := ""
+	if l.Description != nil {
+		desc = renderOrgNodes(l.Description)
+	}
+
+	return &ir.Link{
+		Type:   ir.NodeTypeLink,
+		Kind:   kind,
+		Target: l.URL,
+		Desc:   desc,
 	}
 }
 

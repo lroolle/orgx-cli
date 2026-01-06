@@ -1,67 +1,50 @@
 # orgx CLI spec (v0)
 
-Goal: a workspace-aware CLI for Org-mode + Markdown, designed for humans and AI agents.
+orgx is a small CLI to make large Org files cheap for AI agents:
+- peek directory structure (tree)
+- peek document structure (toc)
+- fetch an exact section by ref (slice)
+- search across many files and return refs (search)
+- apply a few safe, structured edits (later)
 
-Core properties:
-- deterministic outputs
-- stable references (refs), never line numbers
-- safe edits: patch-based, `--dry-run` first, `--yes` to apply
+We are not building “Org-mode in Go”, and we do not need Org-roam DB integration to hit the core goal.
+
+---
+
+## Why this exists (agent constraints)
+
+Agents (Codex CLI / Claude Code style) have hard limits:
+- finite context window (can’t hold a whole vault + code + plan)
+- tool calls cost time; repeated `sed`/`rg`/`cat` burns tokens and latency
+- rewriting whole files is risky (format loss, accidental deletes)
+
+So orgx must:
+- return structure first, content second
+- support output size limits everywhere (`--max-*`, `--limit`, `--max-depth`)
+- make it easy to re-fetch the *same* section later (stable refs)
+- keep stdout machine-clean; send UX noise to stderr
+
+---
+
+## Principles
+
 - stdout is data; stderr is UX
-
-Non-goals (for now):
-- full-fidelity round-trip editing of arbitrary Org/Markdown
-- perfect Org coverage (we target an explicit subset)
-- bidirectional sync between Org and Markdown
-
----
-
-## CLI conventions
-
-Command shape:
-
-`orgx <domain> <command> [args] [flags]`
-
-Terms:
-- path: filesystem path to a document
-- ws: workspace name (configured)
-- ref: stable selector into a document (heading/node/etc)
-
-Help text:
-- help lives with commands (doc generation reads `cobra.Command`)
-- command usage syntax follows `gh` conventions: `docs/command-line-syntax.md` (copy the rules)
+  - data = text slice or JSON
+  - UX = warnings, prompts, progress, diff previews
+- deterministic ordering
+  - stable sort order for lists (path, then ref)
+- no implicit writes
+  - write commands require `--yes` or an interactive confirm (TTY only)
+  - `--dry-run` never writes, never creates backups
 
 ---
 
-## Global flags and env
+## Workspace and config (optional)
 
-Global flags (root persistent):
-- `--ws <name>`: select workspace
-- `--root <path>`: override root directory (bypasses ws root)
-- `--format <auto|org|md|text>`: output format (only for commands that render text)
-- `--json`: machine output (see JSON contract)
-- `--dry-run`: preview changes without writing
-- `--yes`: skip confirmations; required for non-interactive writes
+orgx should work without any config:
+- pass `--root` (directory) and explicit paths
 
-Notes:
-- do NOT use `-w` as shorthand for workspace (reserve `-w/--web` for “open in browser” where relevant).
-- `--dry-run` MUST NOT write, create backups, or mutate files.
-
-Environment (minimal set; extend only when needed):
-- `ORGX_WS`: default workspace (lower precedence than `--ws`)
-- `ORGX_ROOT`: default root override (lower precedence than `--root`)
-- `ORGX_CONFIG_DIR`: config directory override (else XDG)
-- `NO_COLOR`: disable color output
-- `PAGER`: default pager
-
-Resolution order (flags win):
-- ws: `--ws` > `ORGX_WS` > config `default_workspace` > empty
-- root: `--root` > `ORGX_ROOT` > ws.root > `.` (cwd)
-
----
-
-## Workspace and config
-
-Config file location:
+Config location:
 - default: `$XDG_CONFIG_HOME/orgx/config.yaml` (fallback: `$HOME/.config/orgx/config.yaml`)
 - override: `ORGX_CONFIG_DIR`
 
@@ -73,210 +56,167 @@ default_workspace: work
 workspaces:
   work:
     root: /abs/path/to/org
-    format: org   # org|md|auto (default auto)
-    roam_db: /abs/path/to/org-roam.db   # optional
-    inbox: /abs/path/to/inbox.org       # optional
 ```
 
-Workspace subcommands (spec):
-- `orgx init`: create config dir + starter config
-- `orgx ws add <name> --root <dir> [--format <org|md|auto>] [--roam-db <path>] [--inbox <path>]`
+Resolution order:
+- workspace: `--ws` > `ORGX_WS` > config `default_workspace`
+- root: `--root` > `ORGX_ROOT` > ws.root > `.`
+
+Workspace commands (v0):
+- `orgx init`
+- `orgx ws add <name> --root <dir>`
 - `orgx ws list`
 - `orgx ws show <name>`
-- `orgx ws use <name>`: set default workspace
-- `orgx ws rm <name>`: remove workspace (refuse if it is default unless `--yes`)
+- `orgx ws use <name>`
+- `orgx ws rm <name> [--yes]`
 
 ---
 
 ## Refs (stable selectors)
 
-Ref input forms:
-1) path-only: `<path>`
-2) path + selector: `<path>::<selector>`
-3) workspace-qualified path: `@<ws>/<path>` or `@<ws>/<path>::<selector>`
+Ref forms:
+1) `<path>`
+2) `<path>::<selector>`
+3) `@<ws>/<path>` or `@<ws>/<path>::<selector>`
 
-Selector grammar:
-- Org stable ID: `ID:<uuid>`
-- Outline path: `/Outline/Path` (fragile; breaks on rename/move)
-- Markdown hash anchor: `H:<hex>` (fragile; changes on content edits)
+Selector forms (v0):
+- `ID:<value>` (preferred)
+- `/Outline/Path` (fragile)
 
-Parsing rules:
-- split on the last `::` occurrence
-- `<path>` may contain `:` (Windows drive letters) and is still safe because we split on `::`
-- `@<ws>/...` prefix overrides `--ws` and `ORGX_WS`
-
-Ref normalization in JSON output:
-- if ws is known and file is under ws root: `@<ws>/<relpath>::ID:<uuid>`
-- else: `<abspath>::ID:<uuid>` (or selector form used)
-
-Ref lookup:
-- ID refs MUST error if not found
-- outline/hash refs are best-effort but still error if they don’t resolve
-
----
-
-## IR contract (internal, but affects JSON)
-
-We parse Org/Markdown into a shared IR (see `pkg/ir`).
+Notes:
+- split on the last `::` so Windows paths remain valid
+- `@<ws>/...` overrides `--ws`
 
 Stability rules:
-- `ref` is always the primary identifier for headings/nodes returned
-- `span` is best-effort and may shift between versions; never use spans as stable IDs
+- if a heading has `:ID:`, its ref uses `ID:...`
+- if no ID exists, commands may fall back to outline refs; agents should consider them unstable
 
 ---
 
-## Output contract
+## Output model
 
-Rule 1: stdout is data.
-- in human mode: formatted human output
-- in JSON mode: valid JSON only
+Global output flags:
+- `--json`: JSON output (stable, command-specific schemas)
+- `--format <org|text>`: text rendering mode (only for text outputs)
 
-Rule 2: stderr is UX.
-- prompts, progress, warnings, “opening browser…”, and non-data messages
+Output size controls (required for “agent-friendly”):
+- list commands: `--limit`, `--max-depth`
+- slice/search commands: `--max-bytes`, `--max-lines`, `--context`
+- `--full` disables truncation (danger: huge output)
 
-### JSON envelope (v1)
+Rule: in `--json` mode, stdout MUST be valid JSON only.
 
-When `--json` is enabled, commands emit:
+---
 
-```json
-{
-  "version": "v1",
-  "workspace": {
-    "name": "work",
-    "root": "/abs/path"
-  },
-  "result": {},
-  "warnings": [],
-  "changes": [],
-  "errors": []
-}
-```
+## Command set (v0)
 
-Errors in JSON mode:
-- if `--json` is enabled and an error occurs after command execution begins, we MUST still emit a valid JSON envelope with `errors[]` populated and exit non-zero.
-- flag/usage errors MAY print usage (stderr) and return non-JSON.
+Minimal. Everything else is later.
 
-Determinism:
-- arrays are sorted (by path/ref/name) before printing JSON
-- JSON keys use stable casing and naming (snake_case in JSON tags)
+Top-level:
+- `orgx version`
+- `orgx init` (optional)
+- `orgx ws ...` (optional)
+- `orgx file ...`
+- `orgx heading ...`
+- `orgx search ...`
 
-### Error objects
+### `orgx file tree`
+
+Peek directory structure.
+
+`orgx file tree [<root>] [--max-depth <n>] [--type org|all] [--limit <n>]`
+
+JSON schema (v0):
 
 ```json
 {
-  "code": "E_PARSE_FAILED",
-  "message": "failed to parse org file",
-  "path": "/abs/path/to/file.org",
-  "ref": "notes.org::ID:...",
-  "details": {}
-}
-```
-
-### Change objects (write commands)
-
-```json
-{
-  "path": "/abs/path/to/file.org",
-  "kind": "edit",
-  "summary": "set TODO to DONE",
-  "applied": false,
-  "backup_path": ""
+  "root": "/abs/root",
+  "entries": [
+    { "path": "notes.org", "kind": "file" },
+    { "path": "projects/", "kind": "dir" }
+  ]
 }
 ```
 
 Rules:
-- `--dry-run`: `applied=false`, no backup
-- apply: `applied=true`, create backup, include `backup_path`
+- `path` is relative to `root`
+- deterministic ordering
+
+### `orgx file toc`
+
+Peek document structure (headings only).
+
+`orgx file toc <path> [--max-depth <n>] [--match <re>] [--todo <kw>] [--tag <tag>] [--with-id] [--limit <n>]`
+
+JSON schema (v0):
+
+```json
+{
+  "path": "/abs/path/to/file.org",
+  "headings": [
+    {
+      "ref": "file.org::ID:abc",
+      "level": 2,
+      "title": "Build orgx",
+      "todo": "TODO",
+      "tags": ["cli", "org"]
+    }
+  ]
+}
+```
+
+### `orgx heading view`
+
+Fetch an exact subtree/section by ref.
+
+`orgx heading view <ref> [--format org|text] [--full] [--max-bytes <n>] [--max-lines <n>]`
+
+Text mode:
+- prints the (possibly truncated) subtree
+
+JSON schema (v0):
+
+```json
+{
+  "ref": "file.org::ID:abc",
+  "path": "/abs/path/to/file.org",
+  "subtree": "* TODO Title...\n..."
+}
+```
+
+### `orgx search`
+
+Search across a directory/workspace and return refs + small excerpts.
+
+`orgx search <query> [--in <root>] [--type org|all] [--context <n>] [--limit <n>]`
+
+JSON schema (v0):
+
+```json
+{
+  "root": "/abs/root",
+  "query": "deadline",
+  "matches": [
+    {
+      "path": "notes.org",
+      "ref": "notes.org::ID:abc",
+      "excerpt": "SCHEDULED: <2025-12-19 Fri> DEADLINE: <...>"
+    }
+  ]
+}
+```
+
+Search rules:
+- best-effort mapping from match location -> nearest heading ref
+- if no heading found, `ref` may be empty
 
 ---
 
-## Exit codes
+## Later (explicitly out of v0)
 
-- `0`: success
-- `1`: failure (including validation, lookup, parse, write errors)
-- `2`: canceled (user declined confirm, or SIGINT while prompting)
-
----
-
-## Editing model
-
-Edits are patch-based, no surprise mutations:
-1) locate target (ref)
-2) parse enough structure to compute safe patch
-3) compute patch + `changes[]`
-4) `--dry-run`: print diff (human) or return diff in JSON change details
-5) apply with backup + atomic write
-
-File safety:
-- write via temp file + atomic rename where possible
-- create backups: `<file>~<timestamp>`
-- optional lock file for concurrent writers (future)
-
----
-
-## Command specs (v0 tree)
-
-Top-level:
-- `orgx version`
-- `orgx init`
-- `orgx ws ...`
-- `orgx file ...`
-- `orgx heading ...`
-- `orgx roam ...` (optional for initial milestone)
-- `orgx convert ...` (optional for initial milestone)
-- `orgx agenda ...` (later)
-- `orgx capture ...` (later)
-
-### `orgx file`
-
-- `orgx file parse <path>`
-  - JSON `result`: `ir.Document`
-  - human: brief summary + optionally pretty printed outline
-
-- `orgx file outline <path> [--max-depth <n>]`
-  - JSON `result`: `{ "path": "...", "headings": [...] }` (minimal heading objects)
-  - human: tree view
-
-- `orgx file stats <path>`
-  - JSON `result`: counts (headings/tasks/links), sha256, doc_type
-
-- `orgx file search <query> [--in <glob>] [--type <org|md|auto>]`
-  - JSON `result`: matches with refs/spans
-
-### `orgx heading`
-
-- `orgx heading list [<path>]`
-  - if `<path>` omitted: require `--ws` (list across workspace root)
-  - flags: `--level`, `--todo`, `--tag`, `--limit`
-  - JSON `result`: list of headings (stable `ref` required)
-
-- `orgx heading view <ref> [--format <org|md|text|auto>]`
-  - JSON `result`: heading object (includes body)
-  - human: rendered content based on `--format`
-
-- `orgx heading set <ref> [--title <s>] [--todo <s>] [--tags <ops>] [--prop <k=v>] [--scheduled <date>] [--deadline <date>]`
-  - requires `--dry-run` or `--yes` in non-interactive mode
-  - JSON `result`: updated heading summary + `changes[]`
-
-- `orgx heading move <ref> --to <ref>`
-- `orgx heading append <ref> --body <text>`
-
-Tags ops (proposal):
-- `--tags +a,+b,-c` (add/remove)
-
-### `orgx roam` (later)
-
-Backed by `org-roam.db` when configured:
-- `orgx roam node search <text>`
-- `orgx roam node view <node_id>`
-- `orgx roam backlinks <node_id>`
-- `orgx roam node create --title <s> [--file <path>]`
-
----
-
-## Open questions (we should decide early)
-
-- JSON flags: keep simple `--json` bool (envelope only), or adopt gh-style `--json <fields>` plus `--jq/--template`.
-- workspace-qualified refs: keep as output-only normalization, or support input `@ws/...` (proposed).
-- markdown “stable IDs”: frontmatter `id` vs hash anchors; pick one as recommended.
+- Org-roam DB integration (SQLite)
+  - we can get 80% by scanning `:ID:` and `[[id:...]]` links and using workspace search for backlinks
+- agenda/capture
+- full Markdown support
+- free-form “edit anything” commands
 

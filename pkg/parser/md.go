@@ -72,6 +72,7 @@ func extractFrontmatter(ctx parser.Context) map[string]any {
 func extractMdHeadings(path string, doc ast.Node, content []byte) []*ir.Heading {
 	var headings []*ir.Heading
 	var stack []*ir.Heading
+	headingIndex := 0
 
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
@@ -79,7 +80,8 @@ func extractMdHeadings(path string, doc ast.Node, content []byte) []*ir.Heading 
 		}
 
 		if h, ok := n.(*ast.Heading); ok {
-			heading := convertMdHeading(path, h, content)
+			heading := convertMdHeading(path, h, content, headingIndex)
+			headingIndex++
 
 			for len(stack) > 0 && stack[len(stack)-1].Level >= heading.Level {
 				stack = stack[:len(stack)-1]
@@ -101,18 +103,20 @@ func extractMdHeadings(path string, doc ast.Node, content []byte) []*ir.Heading 
 	return headings
 }
 
-func convertMdHeading(path string, h *ast.Heading, content []byte) *ir.Heading {
+func convertMdHeading(path string, h *ast.Heading, content []byte, headingIndex int) *ir.Heading {
 	title := extractMdText(h, content)
-	ref := buildMdRef(path, title)
 
-	startLine := 0
-	endLine := 0
+	startOffset := 0
+	endOffset := 0
 	if h.Lines().Len() > 0 {
-		startLine = h.Lines().At(0).Start
-		endLine = h.Lines().At(h.Lines().Len() - 1).Stop
+		startOffset = h.Lines().At(0).Start
+		endOffset = h.Lines().At(h.Lines().Len() - 1).Stop
 	}
 
+	ref := buildMdRef(path, title, startOffset)
+
 	bodyRaw := extractMdHeadingBody(h, content)
+	links := extractMdLinks(h, content)
 
 	return &ir.Heading{
 		Type:  ir.NodeTypeHeading,
@@ -122,15 +126,79 @@ func convertMdHeading(path string, h *ast.Heading, content []byte) *ir.Heading {
 		Body: ir.Body{
 			Raw: bodyRaw,
 		},
+		Links: links,
 		Span: ir.Span{
-			Start: startLine,
-			End:   endLine,
+			Start: startOffset, // byte offset, not line number
+			End:   endOffset,
 		},
 	}
 }
 
-func buildMdRef(path, title string) string {
-	hash := sha256.Sum256([]byte(title))
+func extractMdLinks(h *ast.Heading, content []byte) []*ir.Link {
+	var links []*ir.Link
+
+	for sibling := h.NextSibling(); sibling != nil; sibling = sibling.NextSibling() {
+		if _, ok := sibling.(*ast.Heading); ok {
+			break
+		}
+		extractMdLinksFromNode(sibling, content, &links)
+	}
+
+	return links
+}
+
+func extractMdLinksFromNode(n ast.Node, content []byte, links *[]*ir.Link) {
+	ast.Walk(n, func(child ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+
+		if link, ok := child.(*ast.Link); ok {
+			dest := string(link.Destination)
+			l := convertMdLink(dest, extractMdText(link, content))
+			if l != nil {
+				*links = append(*links, l)
+			}
+		}
+
+		if autoLink, ok := child.(*ast.AutoLink); ok {
+			dest := string(autoLink.URL(content))
+			l := convertMdLink(dest, dest)
+			if l != nil {
+				*links = append(*links, l)
+			}
+		}
+
+		return ast.WalkContinue, nil
+	})
+}
+
+func convertMdLink(dest, desc string) *ir.Link {
+	var kind ir.LinkKind
+
+	switch {
+	case strings.HasPrefix(dest, "http://") || strings.HasPrefix(dest, "https://"):
+		kind = ir.LinkKindHTTP
+	case strings.HasSuffix(dest, ".md") || strings.HasSuffix(dest, ".org"):
+		kind = ir.LinkKindFile
+	case strings.HasPrefix(dest, "./") || strings.HasPrefix(dest, "../"):
+		kind = ir.LinkKindFile
+	default:
+		return nil
+	}
+
+	return &ir.Link{
+		Type:   ir.NodeTypeLink,
+		Kind:   kind,
+		Target: dest,
+		Desc:   desc,
+	}
+}
+
+func buildMdRef(path, title string, offset int) string {
+	// Include offset in hash to ensure unique refs even for duplicate titles
+	data := fmt.Sprintf("%s:%d:%s", path, offset, title)
+	hash := sha256.Sum256([]byte(data))
 	shortHash := fmt.Sprintf("%x", hash[:4])
 	return fmt.Sprintf("%s::H:%s", path, shortHash)
 }

@@ -20,7 +20,10 @@ func ParseFile(path string) (*ir.Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
+	return ParseFileContent(path, content)
+}
 
+func ParseFileContent(path string, content []byte) (*ir.Document, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	var parser Parser
 

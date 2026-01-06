@@ -51,6 +51,7 @@ type Heading struct {
 	Scheduled string            `json:"scheduled,omitempty"`
 	Deadline  string            `json:"deadline,omitempty"`
 	Body      Body              `json:"body"`
+	Links     []*Link           `json:"links,omitempty"`
 	Children  []Node            `json:"children,omitempty"`
 	Span      Span              `json:"span"`
 }

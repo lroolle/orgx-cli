@@ -3,8 +3,16 @@ package root
 import (
 	"fmt"
 
+	"github.com/lroolle/orgx-cli/pkg/cmd/backlinks"
 	"github.com/lroolle/orgx-cli/pkg/cmd/file"
+	"github.com/lroolle/orgx-cli/pkg/cmd/find"
+	"github.com/lroolle/orgx-cli/pkg/cmd/get"
 	"github.com/lroolle/orgx-cli/pkg/cmd/heading"
+	"github.com/lroolle/orgx-cli/pkg/cmd/id"
+	"github.com/lroolle/orgx-cli/pkg/cmd/links"
+	"github.com/lroolle/orgx-cli/pkg/cmd/ls"
+	"github.com/lroolle/orgx-cli/pkg/cmd/peek"
+	"github.com/lroolle/orgx-cli/pkg/cmd/set"
 	"github.com/lroolle/orgx-cli/pkg/cmd/ws"
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -13,26 +21,56 @@ import (
 func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "orgx",
-		Short: "Org-mode and Markdown CLI for humans and AI agents",
-		Long: `orgx is a workspace-aware CLI that parses and edits Org and Markdown
-via a shared structured IR, with Org as the canonical store and
-Markdown as a first-class interface format.
+		Short: "Context-efficient CLI for LLMs to work with Org and Markdown",
+		Long: `orgx provides a token-efficient interface for AI agents to work with
+Org-mode and Markdown files.
 
-Designed for AI agents: deterministic outputs, stable refs, --json.`,
+Core commands (LLM-optimized):
+  peek   Show file structure without loading content
+  get    Get specific section by ref
+  find   Search headings across files
+  set    Modify heading by ref
+
+Use 'orgx <command> --help' for more information.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 
 	cmd.PersistentFlags().StringP("workspace", "w", "", "Use workspace")
 	cmd.PersistentFlags().String("root", "", "Override root directory")
-	cmd.PersistentFlags().String("format", "auto", "Output format: org, md, auto")
-	cmd.PersistentFlags().Bool("dry-run", false, "Preview changes without writing")
-	cmd.PersistentFlags().BoolP("yes", "y", false, "Non-interactive apply")
+	cmd.PersistentFlags().Bool("dry-run", false, "Preview changes")
+	cmd.PersistentFlags().BoolP("yes", "y", false, "Skip confirmation")
+
+	cmdutil.AddGroup(cmd, "Core (LLM-optimized)",
+		peek.NewCmdPeek(f, nil),
+		get.NewCmdGet(f, nil),
+		find.NewCmdFind(f, nil),
+		set.NewCmdSet(f, nil),
+	)
+
+	cmdutil.AddGroup(cmd, "Navigation",
+		ls.NewCmdLs(f, nil),
+		links.NewCmdLinks(f, nil),
+		backlinks.NewCmdBacklinks(f, nil),
+	)
+
+	cmdutil.AddGroup(cmd, "File operations",
+		file.NewCmdFile(f),
+	)
+
+	cmdutil.AddGroup(cmd, "Heading operations",
+		heading.NewCmdHeading(f),
+	)
+
+	cmdutil.AddGroup(cmd, "ID management",
+		id.NewCmdID(f),
+	)
+
+	cmdutil.AddGroup(cmd, "Workspace",
+		ws.NewCmdWs(f),
+	)
 
 	cmd.AddCommand(newCmdVersion(f))
-	cmd.AddCommand(file.NewCmdFile(f))
-	cmd.AddCommand(heading.NewCmdHeading(f))
-	cmd.AddCommand(ws.NewCmdWs(f))
 
 	return cmd
 }
