@@ -76,20 +76,26 @@ func checkRun(opts *CheckOptions) error {
 	}
 
 	var files []string
+	discoverFailed := 0
 	if info.IsDir() {
-		files, err = findOrgFiles(path, opts.Recursive)
-		if err != nil {
-			return err
+		errOut := func(format string, args ...interface{}) {
+			fmt.Fprintf(opts.IO.ErrOut, format, args...)
 		}
+		files, discoverFailed = findDocFiles(path, opts.Recursive, errOut)
 	} else {
+		if !isSupportedDocFile(path) {
+			return fmt.Errorf("unsupported file type: %s", path)
+		}
 		files = []string{path}
 	}
 
 	idToLocations := make(map[string][]string)
+	scanFailed := discoverFailed
 	for _, file := range files {
 		entries, err := collectIDs(file)
 		if err != nil {
 			fmt.Fprintf(opts.IO.ErrOut, "Warning: %s: %v\n", file, err)
+			scanFailed++
 			continue
 		}
 		for _, e := range entries {
@@ -120,10 +126,19 @@ func checkRun(opts *CheckOptions) error {
 	}
 
 	if opts.Exporter != nil {
-		return opts.Exporter.Write(opts.IO, result)
+		if err := opts.Exporter.Write(opts.IO, result); err != nil {
+			return err
+		}
+		if scanFailed > 0 || len(conflicts) > 0 {
+			return cmdutil.SilentError
+		}
+		return nil
 	}
 
 	if len(conflicts) == 0 {
+		if scanFailed > 0 {
+			return cmdutil.SilentError
+		}
 		fmt.Fprintf(opts.IO.Out, "OK: %d unique IDs, no duplicates\n", result.Total)
 		return nil
 	}

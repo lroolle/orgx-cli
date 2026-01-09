@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/lroolle/orgx-cli/pkg/ir"
+	"github.com/lroolle/orgx-cli/pkg/textutil"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/parser"
@@ -31,6 +33,7 @@ func (p *MarkdownParser) Parse(path string, content []byte) (*ir.Document, error
 	ctx := parser.NewContext()
 	reader := text.NewReader(content)
 	doc := md.Parser().Parse(reader, parser.WithContext(ctx))
+	lines := newLineIndex(content)
 
 	irDoc := &ir.Document{
 		Path:    path,
@@ -48,12 +51,116 @@ func (p *MarkdownParser) Parse(path string, content []byte) (*ir.Document, error
 		}
 	}
 
-	headings := extractMdHeadings(path, doc, content)
+	headings := extractMdHeadings(path, doc, content, lines)
 	for _, h := range headings {
 		irDoc.Nodes = append(irDoc.Nodes, h)
 	}
 
 	return irDoc, nil
+}
+
+type lineIndex struct {
+	starts []int
+}
+
+func newLineIndex(content []byte) *lineIndex {
+	starts := []int{0}
+	for i, b := range content {
+		if b == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	return &lineIndex{starts: starts}
+}
+
+func (li *lineIndex) lineAtByteOffset(offset int) int {
+	if offset <= 0 {
+		return 1
+	}
+	idx := sort.Search(len(li.starts), func(i int) bool {
+		return li.starts[i] > offset
+	}) - 1
+	if idx < 0 {
+		return 1
+	}
+	return idx + 1
+}
+
+func (li *lineIndex) lineContent(lineNum int, content []byte) []byte {
+	idx := lineNum - 1 // 1-based to 0-based
+	if idx < 0 || idx >= len(li.starts) {
+		return nil
+	}
+	start := li.starts[idx]
+	end := len(content)
+	if idx+1 < len(li.starts) {
+		end = li.starts[idx+1]
+	}
+	// Trim trailing newline
+	if end > start && end <= len(content) && content[end-1] == '\n' {
+		end--
+	}
+	if end > start && end <= len(content) && content[end-1] == '\r' {
+		end--
+	}
+	if end < start {
+		return nil
+	}
+	return content[start:end]
+}
+
+func (li *lineIndex) lineEndOffset(lineNum int, content []byte) int {
+	idx := lineNum - 1 // 1-based to 0-based
+	if idx < 0 || idx >= len(li.starts) {
+		return len(content)
+	}
+	if idx+1 < len(li.starts) {
+		return li.starts[idx+1]
+	}
+	return len(content)
+}
+
+func isATXHeading(line []byte) bool {
+	if len(line) == 0 {
+		return false
+	}
+	// ATX headings allow up to 3 leading spaces before #
+	i := 0
+	for i < len(line) && i < 3 && line[i] == ' ' {
+		i++
+	}
+	return i < len(line) && line[i] == '#'
+}
+
+func isSetextUnderline(line []byte) bool {
+	if len(line) == 0 {
+		return false
+	}
+	// Goldmark allows up to 3 leading spaces
+	i := 0
+	for i < len(line) && i < 3 && line[i] == ' ' {
+		i++
+	}
+	if i >= len(line) {
+		return false
+	}
+	// First non-space char must be = or -
+	char := line[i]
+	if char != '=' && char != '-' {
+		return false
+	}
+	// Must have contiguous run of same char (no interspersed spaces)
+	for i < len(line) && line[i] == char {
+		i++
+	}
+	// Rest must be only trailing whitespace
+	for i < len(line) {
+		if line[i] != ' ' && line[i] != '\t' {
+			return false
+		}
+		i++
+	}
+	return true
 }
 
 func extractFrontmatter(ctx parser.Context) map[string]any {
@@ -69,7 +176,7 @@ func extractFrontmatter(ctx parser.Context) map[string]any {
 	return meta
 }
 
-func extractMdHeadings(path string, doc ast.Node, content []byte) []*ir.Heading {
+func extractMdHeadings(path string, doc ast.Node, content []byte, lines *lineIndex) []*ir.Heading {
 	var headings []*ir.Heading
 	var stack []*ir.Heading
 	headingIndex := 0
@@ -80,7 +187,7 @@ func extractMdHeadings(path string, doc ast.Node, content []byte) []*ir.Heading 
 		}
 
 		if h, ok := n.(*ast.Heading); ok {
-			heading := convertMdHeading(path, h, content, headingIndex)
+			heading := convertMdHeading(path, h, content, lines, headingIndex)
 			headingIndex++
 
 			for len(stack) > 0 && stack[len(stack)-1].Level >= heading.Level {
@@ -103,7 +210,7 @@ func extractMdHeadings(path string, doc ast.Node, content []byte) []*ir.Heading 
 	return headings
 }
 
-func convertMdHeading(path string, h *ast.Heading, content []byte, headingIndex int) *ir.Heading {
+func convertMdHeading(path string, h *ast.Heading, content []byte, lines *lineIndex, headingIndex int) *ir.Heading {
 	title := extractMdText(h, content)
 
 	startOffset := 0
@@ -113,7 +220,37 @@ func convertMdHeading(path string, h *ast.Heading, content []byte, headingIndex 
 		endOffset = h.Lines().At(h.Lines().Len() - 1).Stop
 	}
 
-	ref := buildMdRef(path, title, startOffset)
+	startLine := lines.lineAtByteOffset(startOffset)
+	endLineOffset := endOffset
+	if endLineOffset > 0 {
+		endLineOffset--
+	}
+	endLine := lines.lineAtByteOffset(endLineOffset)
+
+	// For setext headings, goldmark's h.Lines() only covers the title line,
+	// not the underline. Check if next line is a setext underline and adjust.
+	// Only check if this is NOT an ATX heading (ATX headings start with # after up to 3 spaces).
+	titleLineContent := lines.lineContent(startLine, content)
+	isATX := isATXHeading(titleLineContent)
+	if !isATX {
+		nextLineContent := lines.lineContent(endLine+1, content)
+		if isSetextUnderline(nextLineContent) {
+			endLine++
+			// Update endOffset to include the underline for ID extraction
+			endOffset = lines.lineEndOffset(endLine, content)
+		}
+	}
+
+	id := extractOrgxIDFromMarkdownHeading(content, startOffset, endOffset)
+
+	ref := ""
+	props := map[string]string(nil)
+	if id != "" {
+		ref = fmt.Sprintf("%s::ID:%s", path, id)
+		props = map[string]string{"ID": id}
+	} else {
+		ref = buildMdRef(path, title, startOffset)
+	}
 
 	bodyRaw := extractMdHeadingBody(h, content)
 	links := extractMdLinks(h, content)
@@ -123,15 +260,82 @@ func convertMdHeading(path string, h *ast.Heading, content []byte, headingIndex 
 		Ref:   ref,
 		Level: h.Level,
 		Title: title,
+		Props: props,
 		Body: ir.Body{
 			Raw: bodyRaw,
 		},
 		Links: links,
 		Span: ir.Span{
-			Start: startOffset, // byte offset, not line number
-			End:   endOffset,
+			Start: startLine,
+			End:   endLine,
 		},
 	}
+}
+
+func extractOrgxIDFromMarkdownHeading(content []byte, headingStartOffset, headingEndOffset int) string {
+	if headingStartOffset < 0 || headingStartOffset >= len(content) {
+		return ""
+	}
+	if headingEndOffset < headingStartOffset {
+		headingEndOffset = headingStartOffset
+	}
+	if headingEndOffset > len(content) {
+		headingEndOffset = len(content)
+	}
+
+	if id := extractOrgxIDFromMarkdownLine(content[headingStartOffset:headingEndOffset]); id != "" {
+		return id
+	}
+
+	pos := headingEndOffset
+	maxLinesToScan := 6
+	for scanned := 0; scanned < maxLinesToScan && pos < len(content); scanned++ {
+		line, nextPos := readLineBytes(content, pos)
+		pos = nextPos
+
+		trimmed := strings.TrimSpace(strings.TrimRight(string(line), "\r"))
+		if trimmed == "" {
+			continue
+		}
+
+		if id := extractOrgxIDFromMarkdownLine([]byte(trimmed)); id != "" {
+			return id
+		}
+
+		if strings.HasPrefix(trimmed, "<!--") && strings.HasSuffix(trimmed, "-->") {
+			continue
+		}
+
+		break
+	}
+
+	return ""
+}
+
+func extractOrgxIDFromMarkdownLine(line []byte) string {
+	m := textutil.OrgxIDExtractRe.FindSubmatch(line)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+func readLineBytes(content []byte, start int) ([]byte, int) {
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(content) {
+		return nil, len(content)
+	}
+	end := start
+	for end < len(content) && content[end] != '\n' {
+		end++
+	}
+	next := end
+	if next < len(content) && content[next] == '\n' {
+		next++
+	}
+	return content[start:end], next
 }
 
 func extractMdLinks(h *ast.Heading, content []byte) []*ir.Link {

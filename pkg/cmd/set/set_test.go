@@ -98,6 +98,57 @@ func TestSetCommand_Title(t *testing.T) {
 	}
 }
 
+func TestSetCommand_MarkdownTitle_WithID(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.md")
+	content := `# Old Title
+<!-- orgx-id: test-id-123 -->
+
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:test-id-123", "--title", "New Title", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), "# New Title") {
+		t.Errorf("markdown title should be changed, got: %s", string(updated))
+	}
+	if !strings.Contains(string(updated), "<!-- orgx-id: test-id-123 -->") {
+		t.Errorf("orgx-id marker should be preserved, got: %s", string(updated))
+	}
+}
+
+func TestSetCommand_MarkdownTitle_RequiresStableRef(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.md")
+	content := `# Heading
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::H:1234", "--title", "New Title", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error for unstable markdown ref")
+	}
+}
+
 func TestSetCommand_DryRun(t *testing.T) {
 	ios, _, stdout, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: ios}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/iostreams"
 	"github.com/lroolle/orgx-cli/pkg/ir"
 	"github.com/lroolle/orgx-cli/pkg/parser"
+	"github.com/lroolle/orgx-cli/pkg/textutil"
 	"github.com/spf13/cobra"
 )
 
@@ -45,10 +47,13 @@ func NewCmdEnsure(f *cmdutil.Factory, runF func(*EnsureOptions) error) *cobra.Co
 	cmd := &cobra.Command{
 		Use:   "ensure [path]",
 		Short: "Add IDs to headings without them",
-		Long: `Add :ID: properties to headings that don't have them.
+		Long: `Add IDs to headings that don't have them.
 
-This command scans org files for headings missing :ID: properties and
-adds UUIDs to make them addressable with stable refs.
+For Org files, this writes an :ID: property in a PROPERTIES drawer.
+For Markdown files, this writes an HTML comment marker right after the heading:
+  <!-- orgx-id: <uuid> -->
+
+Stable refs (::ID:uuid) are required for safe writes.
 
 Examples:
   orgx id ensure notes.org --dry-run       # Preview changes
@@ -100,25 +105,42 @@ func ensureRun(opts *EnsureOptions) error {
 	}
 
 	var files []string
+	discoverFailed := 0
 	if info.IsDir() {
-		files, err = findOrgFiles(path, opts.Recursive)
-		if err != nil {
-			return err
+		errOut := func(format string, args ...interface{}) {
+			fmt.Fprintf(opts.IO.ErrOut, format, args...)
 		}
+		files, discoverFailed = findDocFiles(path, opts.Recursive, errOut)
 	} else {
+		if !isSupportedDocFile(path) {
+			return fmt.Errorf("unsupported file type: %s", path)
+		}
 		files = []string{path}
 	}
 
 	if len(files) == 0 {
-		fmt.Fprintln(opts.IO.Out, "No org files found")
+		if discoverFailed > 0 {
+			if opts.Exporter != nil {
+				if err := opts.Exporter.Write(opts.IO, []IDChange{}); err != nil {
+					return err
+				}
+			}
+			return cmdutil.SilentError
+		}
+		if opts.Exporter != nil {
+			return opts.Exporter.Write(opts.IO, []IDChange{})
+		}
+		fmt.Fprintln(opts.IO.Out, "No .org/.md files found")
 		return nil
 	}
 
-	var allChanges []IDChange
+	allChanges := []IDChange{}
+	scanFailed := discoverFailed
 	for _, file := range files {
 		changes, err := scanFileForMissingIDs(file, opts)
 		if err != nil {
 			fmt.Fprintf(opts.IO.ErrOut, "Warning: %s: %v\n", file, err)
+			scanFailed++
 			continue
 		}
 		allChanges = append(allChanges, changes...)
@@ -126,15 +148,27 @@ func ensureRun(opts *EnsureOptions) error {
 
 	if len(allChanges) == 0 {
 		if opts.Exporter != nil {
-			return opts.Exporter.Write(opts.IO, []IDChange{})
+			if err := opts.Exporter.Write(opts.IO, []IDChange{}); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprintln(opts.IO.Out, "All headings already have IDs")
 		}
-		fmt.Fprintln(opts.IO.Out, "All headings already have IDs")
+		if scanFailed > 0 {
+			return cmdutil.SilentError
+		}
 		return nil
 	}
 
 	// --json with --dry-run: preview mode, output JSON without applying
 	if opts.Exporter != nil && opts.DryRun {
-		return opts.Exporter.Write(opts.IO, allChanges)
+		if err := opts.Exporter.Write(opts.IO, allChanges); err != nil {
+			return err
+		}
+		if scanFailed > 0 {
+			return cmdutil.SilentError
+		}
+		return nil
 	}
 
 	if opts.DryRun {
@@ -144,6 +178,9 @@ func ensureRun(opts *EnsureOptions) error {
 		}
 		fmt.Fprintln(opts.IO.Out)
 		fmt.Fprintln(opts.IO.Out, "Use --yes to apply")
+		if scanFailed > 0 {
+			return cmdutil.SilentError
+		}
 		return nil
 	}
 
@@ -159,14 +196,25 @@ func ensureRun(opts *EnsureOptions) error {
 		}
 	}
 
-	applied := 0
+	appliedChanges := []IDChange{}
+	writeFailed := 0
 	byFile := groupChangesByFile(allChanges)
-	for file, changes := range byFile {
+
+	// Sort files for deterministic output
+	sortedFiles := make([]string, 0, len(byFile))
+	for file := range byFile {
+		sortedFiles = append(sortedFiles, file)
+	}
+	slices.Sort(sortedFiles)
+
+	for _, file := range sortedFiles {
+		changes := byFile[file]
 		if err := applyIDChanges(file, changes); err != nil {
 			fmt.Fprintf(opts.IO.ErrOut, "Error: %s: %v\n", file, err)
+			writeFailed++
 			continue
 		}
-		applied += len(changes)
+		appliedChanges = append(appliedChanges, changes...)
 		if opts.Exporter == nil {
 			for _, c := range changes {
 				fmt.Fprintf(opts.IO.Out, "Added: %s → ::ID:%s\n", c.OldRef, c.NewID)
@@ -174,12 +222,21 @@ func ensureRun(opts *EnsureOptions) error {
 		}
 	}
 
-	// --json with --yes: output JSON after applying
+	// --json with --yes: output only successfully applied changes
 	if opts.Exporter != nil {
-		return opts.Exporter.Write(opts.IO, allChanges)
+		if err := opts.Exporter.Write(opts.IO, appliedChanges); err != nil {
+			return err
+		}
+		if writeFailed > 0 || scanFailed > 0 {
+			return cmdutil.SilentError
+		}
+		return nil
 	}
 
-	fmt.Fprintf(opts.IO.Out, "\nAdded %d IDs\n", applied)
+	fmt.Fprintf(opts.IO.Out, "\nAdded %d IDs\n", len(appliedChanges))
+	if writeFailed > 0 || scanFailed > 0 {
+		return cmdutil.SilentError
+	}
 	return nil
 }
 
@@ -192,35 +249,49 @@ func expandPath(p string) string {
 	return p
 }
 
-func findOrgFiles(dir string, recursive bool) ([]string, error) {
+func findOrgFiles(dir string, recursive bool, errOut func(string, ...interface{})) ([]string, int) {
 	var files []string
+	walkErrors := 0
 
 	if recursive {
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
+				errOut("Warning: %s: %v\n", path, err)
+				walkErrors++
 				return nil
 			}
-			if !info.IsDir() && strings.HasSuffix(strings.ToLower(path), ".org") {
+			if !info.IsDir() && isSupportedDocFile(path) {
 				files = append(files, path)
 			}
 			return nil
 		})
-		if err != nil {
-			return nil, err
-		}
 	} else {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return nil, err
+			errOut("Warning: %s: %v\n", dir, err)
+			return nil, 1
 		}
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".org") {
-				files = append(files, filepath.Join(dir, e.Name()))
+			if e.IsDir() {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			if isSupportedDocFile(path) {
+				files = append(files, path)
 			}
 		}
 	}
 
-	return files, nil
+	return files, walkErrors
+}
+
+func findDocFiles(dir string, recursive bool, errOut func(string, ...interface{})) ([]string, int) {
+	return findOrgFiles(dir, recursive, errOut)
+}
+
+func isSupportedDocFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".org" || ext == ".md" || ext == ".markdown"
 }
 
 func scanFileForMissingIDs(path string, opts *EnsureOptions) ([]IDChange, error) {
@@ -230,11 +301,11 @@ func scanFileForMissingIDs(path string, opts *EnsureOptions) ([]IDChange, error)
 	}
 
 	var changes []IDChange
-	scanNodesForMissingIDs(doc.Nodes, path, opts, &changes)
+	scanNodesForMissingIDs(doc.Nodes, path, doc.DocType, opts, &changes)
 	return changes, nil
 }
 
-func scanNodesForMissingIDs(nodes []ir.Node, path string, opts *EnsureOptions, changes *[]IDChange) {
+func scanNodesForMissingIDs(nodes []ir.Node, path string, docType ir.DocType, opts *EnsureOptions, changes *[]IDChange) {
 	for _, n := range nodes {
 		h, ok := n.(*ir.Heading)
 		if !ok {
@@ -244,18 +315,22 @@ func scanNodesForMissingIDs(nodes []ir.Node, path string, opts *EnsureOptions, c
 		if _, hasID := h.Props["ID"]; !hasID {
 			if matchesFilters(h, opts) {
 				newID := uuid.New().String()
+				line := h.Span.Start
+				if docType == ir.DocTypeMarkdown {
+					line = h.Span.End
+				}
 				*changes = append(*changes, IDChange{
 					File:   path,
 					OldRef: h.Ref,
 					NewID:  newID,
 					Title:  h.Title,
-					Line:   h.Span.Start,
+					Line:   line,
 				})
 			}
 		}
 
 		if len(h.Children) > 0 {
-			scanNodesForMissingIDs(h.Children, path, opts, changes)
+			scanNodesForMissingIDs(h.Children, path, docType, opts, changes)
 		}
 	}
 }
@@ -313,6 +388,14 @@ func groupChangesByFile(changes []IDChange) map[string][]IDChange {
 }
 
 func applyIDChanges(path string, changes []IDChange) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".md" || ext == ".markdown" {
+		return applyMarkdownIDChanges(path, changes)
+	}
+	return applyOrgIDChanges(path, changes)
+}
+
+func applyOrgIDChanges(path string, changes []IDChange) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -324,7 +407,8 @@ func applyIDChanges(path string, changes []IDChange) error {
 		return err
 	}
 
-	lines := strings.Split(string(content), "\n")
+	lineEnding := textutil.DetectLineEnding(string(content))
+	lines := textutil.SplitLines(string(content))
 
 	// Apply changes in reverse order to preserve line numbers
 	for i := len(changes) - 1; i >= 0; i-- {
@@ -355,7 +439,43 @@ func applyIDChanges(path string, changes []IDChange) error {
 		}
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), mode)
+	return os.WriteFile(path, []byte(textutil.JoinLines(lines, lineEnding)), mode)
+}
+
+func applyMarkdownIDChanges(path string, changes []IDChange) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	mode := info.Mode()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lineEnding := textutil.DetectLineEnding(string(content))
+	lines := textutil.SplitLines(string(content))
+
+	for i := len(changes) - 1; i >= 0; i-- {
+		c := changes[i]
+		lineIdx := c.Line - 1 // 1-based to 0-based
+		if lineIdx < 0 || lineIdx >= len(lines) {
+			continue
+		}
+
+		insertAt := lineIdx + 1
+		if insertAt < len(lines) {
+			if textutil.OrgxIDMarkerRe.MatchString(lines[insertAt]) {
+				continue
+			}
+		}
+
+		marker := fmt.Sprintf("<!-- orgx-id: %s -->", c.NewID)
+		lines = insertLine(lines, insertAt, marker)
+	}
+
+	return os.WriteFile(path, []byte(textutil.JoinLines(lines, lineEnding)), mode)
 }
 
 func insertLine(lines []string, idx int, line string) []string {
@@ -377,3 +497,4 @@ func insertLines(lines []string, idx int, newLines []string) []string {
 	result = append(result, lines[idx:]...)
 	return result
 }
+

@@ -9,10 +9,10 @@ func NewCmdID(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "id <command>",
 		Short: "Manage heading IDs",
-		Long: `Manage :ID: properties on headings.
+		Long: `Manage heading IDs.
 
 Stable refs (::ID:uuid) are required for safe writes. Use these commands
-to add IDs to headings and validate uniqueness.`,
+to add IDs to headings and validate uniqueness (Org :ID: properties, Markdown orgx-id markers).`,
 	}
 
 	cmdutil.AddGroup(cmd, "Modify",

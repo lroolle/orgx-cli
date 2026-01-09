@@ -118,6 +118,21 @@ func TestMdParser_HashRef(t *testing.T) {
 	}
 }
 
+func TestMdParser_IDRefFromMarker(t *testing.T) {
+	content := `# My Heading
+<!-- orgx-id: test-id-123 -->
+`
+	doc := parseMdString(t, content)
+	h := doc.Nodes[0].(*ir.Heading)
+
+	if !strings.Contains(h.Ref, "::ID:test-id-123") {
+		t.Errorf("ref = %q, should contain ::ID:test-id-123", h.Ref)
+	}
+	if h.Props["ID"] != "test-id-123" {
+		t.Errorf("props.ID = %q, want %q", h.Props["ID"], "test-id-123")
+	}
+}
+
 func TestMdParser_CodeBlocks(t *testing.T) {
 	content := "# Heading\n\n```python\ndef hello():\n    print('hello')\n```\n"
 	doc := parseMdString(t, content)
@@ -308,4 +323,57 @@ func parseMdString(t *testing.T, content string) *ir.Document {
 		t.Fatalf("failed to parse: %v", err)
 	}
 	return doc
+}
+
+func TestIsSetextUnderline(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"===", true},
+		{"---", true},
+		{"=", true},
+		{"-", true},
+		{"  ===", true},       // up to 3 leading spaces
+		{"   ---", true},      // 3 leading spaces
+		{"====  ", true},      // trailing whitespace
+		{"- - -", false},      // HR, not setext (spaces between)
+		{"* * *", false},      // HR with asterisks
+		{"    ===", false},    // 4 leading spaces = code block
+		{"=-=", false},        // mixed chars
+		{"", false},
+		{"   ", false},        // only spaces
+		{"# heading", false},  // ATX heading
+	}
+
+	for _, tt := range tests {
+		got := isSetextUnderline([]byte(tt.input))
+		if got != tt.want {
+			t.Errorf("isSetextUnderline(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestIsATXHeading(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"# Heading", true},
+		{"## Heading", true},
+		{" # Heading", true},   // 1 leading space
+		{"  # Heading", true},  // 2 leading spaces
+		{"   # Heading", true}, // 3 leading spaces
+		{"    # Heading", false}, // 4 spaces = code block
+		{"Setext Title", false},
+		{"===", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		got := isATXHeading([]byte(tt.input))
+		if got != tt.want {
+			t.Errorf("isATXHeading(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
 	"github.com/lroolle/orgx-cli/pkg/iostreams"
 	"github.com/lroolle/orgx-cli/pkg/ir"
+	"github.com/lroolle/orgx-cli/pkg/textutil"
 	"github.com/spf13/cobra"
 )
 
@@ -70,7 +71,12 @@ func setRun(opts *SetOptions) error {
 	}
 
 	if shared.IsMarkdownFile(ref.Path) {
-		return fmt.Errorf("markdown writes not yet supported (span calculation incomplete)")
+		if ref.RefType != shared.RefTypeID {
+			return fmt.Errorf("markdown writes require stable ::ID: refs; run: orgx id ensure %s --yes", ref.Path)
+		}
+		if opts.Todo != "" || len(opts.Tags) > 0 {
+			return fmt.Errorf("markdown writes support --title only (no --todo/--tags)")
+		}
 	}
 
 	content, err := os.ReadFile(ref.Path)
@@ -83,7 +89,13 @@ func setRun(opts *SetOptions) error {
 		return err
 	}
 
-	newContent, changes, err := applyChanges(string(content), heading, opts)
+	var newContent string
+	var changes []string
+	if shared.IsMarkdownFile(ref.Path) {
+		newContent, changes, err = applyMarkdownChanges(string(content), heading, opts)
+	} else {
+		newContent, changes, err = applyChanges(string(content), heading, opts)
+	}
 	if err != nil {
 		return err
 	}
@@ -138,8 +150,64 @@ func setRun(opts *SetOptions) error {
 	return nil
 }
 
+func applyMarkdownChanges(content string, h *ir.Heading, opts *SetOptions) (string, []string, error) {
+	if opts.Title == "" || opts.Title == h.Title {
+		return content, nil, nil
+	}
+
+	lineEnding := textutil.DetectLineEnding(content)
+	lines := textutil.SplitLines(content)
+	lineIdx := h.Span.Start - 1
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return "", nil, fmt.Errorf("could not locate heading in file")
+	}
+
+	line := lines[lineIdx]
+	if ok, updated := replaceMarkdownHeadingTitle(line, opts.Title); ok {
+		lines[lineIdx] = updated
+		return textutil.JoinLines(lines, lineEnding), []string{fmt.Sprintf("Title: %s -> %s", h.Title, opts.Title)}, nil
+	}
+
+	if lineIdx+1 < len(lines) && isSetextUnderline(lines[lineIdx+1]) {
+		lines[lineIdx] = opts.Title
+		return textutil.JoinLines(lines, lineEnding), []string{fmt.Sprintf("Title: %s -> %s", h.Title, opts.Title)}, nil
+	}
+
+	return "", nil, fmt.Errorf("not a markdown heading at line %d", h.Span.Start)
+}
+
+var markdownATXHeadingLinePattern = regexp.MustCompile(`^(\s{0,3})(#{1,6})\s+(.+?)(\s+#+\s*)?$`)
+
+func replaceMarkdownHeadingTitle(line, newTitle string) (bool, string) {
+	m := markdownATXHeadingLinePattern.FindStringSubmatchIndex(line)
+	if m == nil {
+		return false, ""
+	}
+
+	prefix := line[m[2]:m[3]] + line[m[4]:m[5]]
+	suffix := ""
+	if m[8] != -1 {
+		suffix = line[m[8]:m[9]]
+	}
+	return true, prefix + " " + newTitle + suffix
+}
+
+func isSetextUnderline(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	for _, r := range trimmed {
+		if r != '=' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 func applyChanges(content string, h *ir.Heading, opts *SetOptions) (string, []string, error) {
-	lines := strings.Split(content, "\n")
+	lineEnding := textutil.DetectLineEnding(content)
+	lines := textutil.SplitLines(content)
 	var changes []string
 
 	lineIdx := findHeadingLine(lines, h)
@@ -168,7 +236,7 @@ func applyChanges(content string, h *ir.Heading, opts *SetOptions) (string, []st
 	}
 
 	lines[lineIdx] = currentLine
-	return strings.Join(lines, "\n"), changes, nil
+	return textutil.JoinLines(lines, lineEnding), changes, nil
 }
 
 func findHeadingLine(lines []string, h *ir.Heading) int {
@@ -247,3 +315,4 @@ func equalTags(a, b []string) bool {
 	}
 	return true
 }
+

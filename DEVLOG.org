@@ -1,6 +1,99 @@
 #+TITLE: orgx-cli Development Log
 #+STARTUP: overview
 
+* [2026-01-06] Markdown Stable IDs + Safe Title Writes                 :BREAKING:RELIABILITY:
+:PROPERTIES:
+:ID: devlog-2026-01-06-markdown-stable-ids
+:END:
+
+** Context
+orgx-cli needs stable refs (=::ID:=) for safe, repeatable edits; Markdown previously only had hash refs (=::H:=) and line addressing was inconsistent.
+
+** Why
+Hash refs in Markdown are fragile and Markdown spans were byte offsets, which blocked safe line-scoped writes (=orgx set= hard-disabled Markdown writes).
+
+** What
+- =BREAKING= Standardized Markdown =span= to 1-based line numbers (like Org) in JSON IR
+- Markdown headings can carry stable IDs via adjacent marker: =<!-- orgx-id: <id> -->=; parser emits =path::ID:<id>= and populates =props.ID=
+- =orgx id ensure= supports Markdown by inserting the marker right after the heading (Org behavior unchanged: PROPERTIES drawer + =:ID:=)
+- =orgx id list= / =orgx id check= scan =.org= and =.md= files
+- Enabled Markdown writes for =orgx set= and =orgx heading set= (title changes only, requires =::ID:= ref)
+
+** How
+*** Commands
+#+BEGIN_SRC bash
+go test ./...
+#+END_SRC
+
+** Decisions
+| Decision                                      | Alternatives                                  | Rationale                                                     | DRI  | Timestamp (UTC)         |
+|-----------------------------------------------+-----------------------------------------------+---------------------------------------------------------------+------+-------------------------|
+| Markdown ID storage uses HTML comment marker  | `{#id}` attribute; inline HTML anchor tags    | Renderer-safe, low-noise, easy to inject/parse near heading    | eric | 2026-01-06T04:47:13Z |
+| Markdown writes require =::ID:= refs          | Allow =::H:= writes                             | =::H:= is unstable; safe writes need stable addressing         | eric | 2026-01-06T04:47:13Z |
+
+** Risks                                                            :SECURITY:
+| Risk                                              | Mitigation                                           | Owner | Status |
+|---------------------------------------------------+------------------------------------------------------+-------+--------|
+| External consumers rely on Markdown =span= being byte offsets | Marked =BREAKING=; keep edits line-scoped and stable | eric  | Open   |
+| Users delete the marker comment and lose stability | =orgx id ensure= restores markers                     | eric  | Open   |
+
+** Rollback
+*** Trigger
+- Downstream tooling breaks due to Markdown =span= unit change
+- Markdown writes corrupt headings or fail to locate refs reliably
+
+*** Procedure
+1. Revert changes in =pkg/parser/md.go= and Markdown branches in =pkg/cmd/set/set.go= / =pkg/cmd/heading/set/set.go=
+2. Revert Markdown support in =pkg/cmd/id/*.go= (ensure/list/check)
+3. Data impact: reversible (comment markers added to Markdown files)
+
+** Tests
+- Added/updated: =pkg/parser/md_test.go=, =pkg/cmd/id/ensure_test.go=, =pkg/cmd/set/set_test.go=
+
+* [2026-01-06] Tree-sitter Reference Checkout for Parser R&D        :RELIABILITY:PERF:
+:PROPERTIES:
+:ID: devlog-2026-01-06-tree-sitter-reference
+:END:
+
+** Context
+orgx-cli parses org-mode via go-org and markdown via goldmark for IR extraction, heading lookup, and safe in-place edits.
+
+** Why
+Current markdown parsing and span handling are brittle for edits and cross-tooling; tree-sitter provides byte-accurate, error-tolerant syntax trees with stable node spans and incremental parsing.
+
+** What
+- Added a local reference checkout of tree-sitter core at =reference/tree-sitter= (commit =17e3c7a5c56527a179fa6e37ce7ee934493e5047=, =v0.26.3-26-g17e3c7a5=, Cargo version =0.27.0=) for parser evaluation in orgx-cli work
+
+** How
+*** Commands
+#+BEGIN_SRC bash
+# Verify pinned tree-sitter core checkout (from worktree/orgx-cli)
+git -C ../../reference/tree-sitter remote -v
+git -C ../../reference/tree-sitter rev-parse HEAD
+git -C ../../reference/tree-sitter describe --tags --always
+rg -n '^version\\s*=' ../../reference/tree-sitter/Cargo.toml
+#+END_SRC
+
+** Decisions
+| Decision                                        | Alternatives                                         | Rationale                                                        | DRI  | Timestamp (UTC)         |
+|-------------------------------------------------+------------------------------------------------------+------------------------------------------------------------------+------+-------------------------|
+| Keep tree-sitter core as a local =reference/= checkout (not vendored into orgx-cli yet) | Git submodule; vendor C sources into repo; skip tree-sitter and improve goldmark-only pipeline | Keep orgx-cli repo clean while we validate grammar + Go binding choice and IR mapping | eric | 2026-01-06T04:47:13Z |
+
+** Risks                                                            :SECURITY:
+| Risk                                        | Mitigation                                              | Owner | Status |
+|---------------------------------------------+---------------------------------------------------------+-------+--------|
+| Grammar/binding choice locks us into awkward APIs or licensing surprises | Keep reference-only until we pick a binding + grammar set and validate packaging | eric  | Open   |
+| Byte-offset spans drift when we reserialize markdown/org differently from parser | Keep edits line-scoped; use parser spans only for lookup/anchoring | eric  | Open   |
+
+** WIP
+- [ ] Decide grammar scope: markdown only vs org + markdown (tree-sitter-markdown, tree-sitter-org)
+- [ ] Evaluate Go integration: Cgo bindings vs WASM (packaging, performance, portability)
+- [ ] Define IR contract: mapping tree-sitter nodes → orgx IR (heading IDs, spans, links, code blocks)
+
+** Links
+- Tree-sitter: https://github.com/tree-sitter/tree-sitter
+- Local checkout: ../../reference/tree-sitter
+
 * [2025-12-27] Code Review Fixes + Architecture Decisions            :BREAKING:RELIABILITY:
 :PROPERTIES:
 :ID: devlog-2025-12-27-code-review
@@ -222,3 +315,57 @@ Current tests use =iostreams.Test()= which simulates TTY. Need explicit non-TTY 
 
 *** TODO Document markdown line number limitation
 Markdown parser (goldmark) provides byte offsets, not line numbers. Current workaround: scan file to convert offset → line. Document as known limitation.
+
+* [2026-01-08 Wed] Design Direction: Agent-First Timestamp & State Management
+
+** Context
+
+Discussion on how to handle timestamps and state management in orgx.
+Explored org-roam, org-agenda, Logseq as inspiration.
+
+** Decision
+
+Agent-first, not human-UI-first.
+
+- orgx = CLI for agents (token-efficient, composable)
+- Logseq = inspiration for concepts, not a dependency
+- Build for agent-to-agent orchestration
+- Human in the loop, but agents do the orchestration
+
+** Key Concepts from org-agenda/org-roam/Logseq
+
+- State transitions: IDEA → TODO → STRT → DONE (with WAIT/HOLD)
+- Timestamps: SCHEDULED, DEADLINE, CREATED, CLOSED
+- State change logging: LOGBOOK drawer
+- Daily notes pattern: date-scoped files
+- Block/heading linking: stable refs
+
+** TODO States (user's Emacs config)
+
+IDEA  - captured, not actionable
+TODO  - committed, ready to work
+PROJ  - project container
+LOOP  - recurring
+STRT  - actively working
+WAIT  - blocked on external
+HOLD  - paused intentionally
+DONE  - completed
+KILL  - cancelled
+
+** Proposed Features
+
+1. State change logging (auto-append to LOGBOOK)
+2. Timestamp flags (--scheduled, --deadline, --created)
+3. State-aware queries (--todo WAIT, --after DATE)
+4. Capture command (orgx capture "text" --to FILE)
+5. Promote/refile (orgx promote ref --to FILE)
+6. Log/history view (orgx log ref)
+
+** Spec
+
+See docs/SPEC-state-timestamps.md for full implementation details.
+
+** Next
+
+- [ ] Review spec, prioritize phases
+- [ ] Implement Phase 1 (timestamp support)

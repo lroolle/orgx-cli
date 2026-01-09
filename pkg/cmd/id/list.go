@@ -37,7 +37,7 @@ func NewCmdList(f *cmdutil.Factory, runF func(*ListOptions) error) *cobra.Comman
 	cmd := &cobra.Command{
 		Use:   "list [path]",
 		Short: "List all heading IDs",
-		Long: `List all :ID: properties found in org files.
+		Long: `List all heading IDs found in org and markdown files.
 
 Examples:
   orgx id list notes.org
@@ -73,20 +73,26 @@ func listRun(opts *ListOptions) error {
 	}
 
 	var files []string
+	discoverFailed := 0
 	if info.IsDir() {
-		files, err = findOrgFiles(path, opts.Recursive)
-		if err != nil {
-			return err
+		errOut := func(format string, args ...interface{}) {
+			fmt.Fprintf(opts.IO.ErrOut, format, args...)
 		}
+		files, discoverFailed = findDocFiles(path, opts.Recursive, errOut)
 	} else {
+		if !isSupportedDocFile(path) {
+			return fmt.Errorf("unsupported file type: %s", path)
+		}
 		files = []string{path}
 	}
 
-	var entries []IDEntry
+	entries := []IDEntry{}
+	scanFailed := discoverFailed
 	for _, file := range files {
 		fileEntries, err := collectIDs(file)
 		if err != nil {
 			fmt.Fprintf(opts.IO.ErrOut, "Warning: %s: %v\n", file, err)
+			scanFailed++
 			continue
 		}
 		entries = append(entries, fileEntries...)
@@ -100,10 +106,19 @@ func listRun(opts *ListOptions) error {
 	})
 
 	if opts.Exporter != nil {
-		return opts.Exporter.Write(opts.IO, entries)
+		if err := opts.Exporter.Write(opts.IO, entries); err != nil {
+			return err
+		}
+		if scanFailed > 0 {
+			return cmdutil.SilentError
+		}
+		return nil
 	}
 
 	if len(entries) == 0 {
+		if scanFailed > 0 {
+			return cmdutil.SilentError
+		}
 		fmt.Fprintln(opts.IO.Out, "No IDs found")
 		return nil
 	}
@@ -113,6 +128,9 @@ func listRun(opts *ListOptions) error {
 	}
 	fmt.Fprintf(opts.IO.Out, "\n%d IDs total\n", len(entries))
 
+	if scanFailed > 0 {
+		return cmdutil.SilentError
+	}
 	return nil
 }
 
