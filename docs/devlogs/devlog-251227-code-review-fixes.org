@@ -1,0 +1,113 @@
+:PROPERTIES:
+:ID: devlog:251227-code-review-fixes
+:END:
+#+TITLE: Code Review Fixes + Architecture Decisions
+#+DATE: [2025-12-27]
+#+FILETAGS: :devlog:breaking:reliability:
+
+* Context
+
+orgx-cli is a Go CLI for Org/Markdown ops. NAK code review identified critical bugs in =set= command.
+
+* Why
+
+=set= had: no non-TTY safety gate, fuzzy heading matching, non-deterministic tag sorting, global string replacement causing corruption.
+
+* What
+
+- =BREAKING= Non-TTY safety: writes require =--yes= in non-interactive mode
+- =RELIABILITY= Position-based heading lookup using =Span.Start= instead of =strings.Contains=
+- =RELIABILITY= Line-based editing at specific index instead of =strings.Replace=
+- Tag sorting with =slices.Sort()= for deterministic output
+- Removed misleading =--fields= flag (accepted but non-functional)
+- Fixed loose ref matching: =strings.Contains= -> =strings.HasSuffix=
+- Added ~/path expansion via =ExpandPath()= helper
+- Eliminated double file reads: new =ParseFileContent()= and =FindHeadingFromContent()=
+
+* How
+
+** Commands
+#+BEGIN_SRC bash
+# Before: silent writes in non-TTY mode (DANGEROUS)
+orgx set file.org::/Path --todo DONE < /dev/null  # would silently write
+
+# After: requires explicit confirmation
+orgx set file.org::/Path --todo DONE --yes < /dev/null  # safe
+#+END_SRC
+
+** Key Diffs
+#+BEGIN_SRC diff
+--- a/pkg/cmd/heading/set/set.go
++++ b/pkg/cmd/heading/set/set.go
+@@ -85,6 +85,11 @@ func setRun(opts *Options) error {
++       if !opts.DryRun && !opts.Yes && !opts.IO.CanPrompt() {
++               return cmdutil.NewFlagError("--yes required in non-interactive mode")
++       }
+
+--- a/pkg/cmd/heading/shared/lookup.go
++++ b/pkg/cmd/heading/shared/lookup.go
+-       return strings.Contains(ref, selector)
++       return strings.HasSuffix(ref, selector)
+#+END_SRC
+
+* Decisions
+
+| Decision                     | Alternatives                      | Rationale                                       |
+|------------------------------+-----------------------------------+-------------------------------------------------|
+| No implicit ID writes        | Auto-add IDs on read commands     | Reads must remain pure; mutations explicit only |
+| Noun-verb grammar (gh-style) | Verb-only (git-style)             | Better namespacing, clearer for agents          |
+| Three-tier ref stability     | Binary (stable/unstable)          | Allows read-only use of fragile refs with warnings |
+| Position-based heading match | Title-based fuzzy matching        | Prevents wrong heading edits with duplicate titles |
+| Line-index editing           | AST regeneration / global replace | Preserves formatting, predictable behavior      |
+
+* Risks
+
+| Risk                          | Mitigation                                  | Status   |
+|-------------------------------+---------------------------------------------+----------|
+| Breaking scripts using =set=  | Document migration, error msg points to fix | Accepted |
+| Markdown line number mismatch | Document limitation, org-files prioritized  | Accepted |
+
+* Architecture: Five Immutable Rules
+
+1. =READS NEVER WRITE= - no implicit mutations during get/peek/find
+2. =WRITES ARE EXPLICIT= - require =--yes= in non-interactive mode
+3. =REFS HAVE POLICIES= - stable (::ID:) vs fragile (::/path, ::H:hash)
+4. =OUTPUT IS DETERMINISTIC= - sorted, stable schema, no randomness
+5. =GRAMMAR IS NOUN-VERB= - =orgx <noun> <verb>= with legacy aliases
+
+* Ref Stability Hierarchy
+
+| Level     | Pattern              | Example                    | Write Policy      |
+|-----------+----------------------+----------------------------+-------------------|
+| STABLE    | =path::ID:<uuid>=    | =file.org::ID:abc-123=     | Safe, encouraged  |
+| FRAGILE   | =path::/outline=     | =file.org::/Proj/Design=   | Warn, allow       |
+| FRAGILE   | =path::H:<hash>=     | =README.md::H:a1b2c3=      | Warn, allow       |
+| AMBIGUOUS | bare path            | =file.org=                 | Error, reject     |
+
+* Noun-Verb Taxonomy
+
+#+BEGIN_SRC text
+orgx <noun> <verb> [target] [flags]
+
+file:     list, parse, outline (peek), validate
+heading:  list, view (get), set, tree
+id:       ensure, list, check
+link:     list, backlinks, broken
+ws:       add, list, use, show
+#+END_SRC
+
+Legacy aliases preserved: peek->file outline, get->heading view, set->heading set, find->heading list, ls->file list
+
+* Gotchas
+
+- go-org AST uses 1-based line numbers, Go file I/O uses 0-based indexing
+- Duplicate heading titles break title-based matching (now fixed with position-based)
+- Map iteration order is random in Go (tags now explicitly sorted)
+- =strings.Replace(s, old, new, -1)= replaces ALL occurrences (now line-scoped)
+
+* WIP
+
+- [ ] Implement =orgx id ensure= command
+- [ ] Add fragility warnings to write commands using non-ID refs
+- [ ] Wire up noun-verb command structure via Cobra groups
+- [ ] Consolidate duplicate set.go files (pkg/cmd/set/ vs pkg/cmd/heading/set/)

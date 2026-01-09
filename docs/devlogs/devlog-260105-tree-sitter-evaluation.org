@@ -1,0 +1,198 @@
+:PROPERTIES:
+:ID: devlog:260105-tree-sitter-evaluation
+:END:
+#+TITLE: Tree-sitter Evaluation for orgx-cli Parser
+#+DATE: [2026-01-05]
+#+FILETAGS: :devlog:research:arch:
+
+* Summary
+
+** Context
+orgx-cli (Go CLI for LLM Org/Markdown ops) uses go-org + goldmark batch parsers with custom IR.
+
+** Why
+Evaluate tree-sitter for incremental parsing, precise position tracking, and source-preserving edits vs current batch-only go-org implementation.
+
+** What
+- Research tree-sitter core tech, Go bindings, org-mode grammar maturity
+- Benchmark potential gains: incremental parse (1ms vs full reparse), 36-50x speedups observed in other langs
+- Identify blockers: grammar maturity (all WIP/archived), CGO overhead, dynamic org keyword support
+
+** How
+*** Current Parser Stack
+| Component | Lib | Capabilities | Limitations |
+|-----------+-----+--------------+-------------|
+| Org | =github.com/niklasfasching/go-org= | Headlines, props, scheduling, 80/20 org spec | No incremental, batch-only, manual line tracking |
+| Markdown | goldmark | Full GFM | Batch-only |
+| IR | Custom | Unified doc structure | Re-parse on edit |
+
+*** Parser Location
+#+BEGIN_SRC bash
+pkg/parser/org.go  # Wraps go-org with lineTracker hack for spans
+#+END_SRC
+
+*** Tree-sitter Capabilities
+1. Incremental parsing: edit 1 line → reparse ~1ms (vs full file)
+2. Built-in positions: byte offsets + 0-based row/col
+3. Query language: S-expression pattern matching
+4. Error recovery: partial trees on syntax errors
+5. CST: preserves all tokens including whitespace
+
+*** Go Binding Options
+| Binding | Repo | Notes |
+|---------+------+-------|
+| Official | =github.com/tree-sitter/go-tree-sitter= | Minimal, purego grammar loading, requires CGO |
+| Community | =github.com/smacker/go-tree-sitter= | More grammars bundled, requires CGO |
+
+Both require explicit =Close()= calls (CGO finalizer bugs).
+
+*** tree-sitter-org Grammar Survey
+| Grammar | Repo | Status | Notes |
+|---------|------|--------|-------|
+| emiasims | =emiasims/tree-sitter-org= | *ARCHIVED* (2025-02) | Most mature |
+| gagbo fork | =gagbo/tree-sitter-org-milisims= | Active | Fork of above |
+| gagbo v2 | =gagbo/tree-sitter-org= | WIP | Rewrite attempt |
+
+*** Supported Org Elements (tree-sitter-org)
+- Headlines: stars, TODO keywords, tags
+- Timestamps: =<2026-01-05>=, ranges
+- Lists: bullets, checkboxes
+- Directives: =#+TITLE:=, =#+TODO:=
+- Markup: *bold*, /italic/, =code=
+- Property drawers: =:PROPERTIES:=
+
+*** Benchmarks (External Projects)
+| Project | Speedup | Context |
+|---------|---------|---------|
+| Symflower | 36x | tree-sitter vs JavaParser |
+| tree-sitter-haskell | 50x | After C++14→C conversion |
+| Large files (25k lines) | 0.2-0.3s | Full reparse time |
+
+** Result
+*** Outcome
+Tree-sitter viable for incremental parsing + position tracking, but grammar ecosystem immature.
+
+*** Constraints
+- Org dynamic keywords (=#+TODO:= customization) incompatible with static tree-sitter grammars
+- CGO requirement complicates cross-compilation
+- No production-ready tree-sitter-org grammar (all experimental/archived)
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp (UTC) |
+|----------+--------------+-----------+-----+-----------------|
+| Defer tree-sitter adoption | A) Hybrid go-org+tree-sitter, B) Fork tree-sitter-org | Grammar immaturity + CGO overhead > incremental gains for batch CLI workflow | @lroolle | 2026-01-05T00:00:00Z |
+
+** Risks
+| Risk | Mitigation | Owner | Status |
+|------+------------+-------+--------|
+| Grammar abandonment | All tree-sitter-org repos archived/WIP | Monitor ecosystem, fallback to go-org | @lroolle | ACCEPTED |
+| CGO cross-compile | Breaks pure Go builds | Avoid unless incremental parse critical | @lroolle | ACCEPTED |
+
+** WIP
+- [X] Survey tree-sitter core + Go bindings
+- [X] Map tree-sitter-org grammar coverage
+- [X] Benchmark research
+- [ ] Monitor gagbo/tree-sitter-org-milisims activity (quarterly)
+- [ ] Re-evaluate if: (1) grammar stabilizes, (2) live-editing use case emerges, (3) CGO overhead acceptable
+
+** Links
+- tree-sitter: https://github.com/tree-sitter/tree-sitter
+- Go binding (official): https://github.com/tree-sitter/go-tree-sitter
+- Go binding (smacker): https://github.com/smacker/go-tree-sitter
+- tree-sitter-org (archived): https://github.com/emiasims/tree-sitter-org
+- tree-sitter-org-milisims: https://github.com/gagbo/tree-sitter-org-milisims
+- go-org: https://github.com/niklasfasching/go-org
+
+** Notes
+*** Assumptions
+- orgx-cli workload remains batch-oriented (one-shot parse → transform → output)
+- No near-term requirement for live document editing
+- Current go-org 80/20 coverage sufficient for target use cases
+
+*** Constraints
+- Pure Go preferred for cross-platform distribution
+- Parser must handle malformed org gracefully (LLM-generated content)
+
+*** Open Questions
+- Q: Does LLM workflow need incremental parse? A: Unlikely, prompts trigger full re-analysis
+- Q: Source-preserving edits needed? A: Not currently, IR transforms acceptable
+- Q: CGO acceptable if 10x+ speedup proven? A: Re-evaluate with benchmarks
+
+*** Gotchas
+- tree-sitter positions are 0-based (row, col)
+- go-org has no built-in position tracking (we use lineTracker workaround)
+- Tree-sitter grammars can't express org's per-file keyword config (=#+TODO:=)
+- All Go tree-sitter bindings leak memory without explicit =Close()=
+
+*** Path Forward (Revisit Q2 2026)
+1. If tree-sitter-org grammar reaches 1.0 → prototype hybrid parser
+2. If live-editing requested → justify CGO overhead with benchmarks
+3. Otherwise: optimize go-org path, cache parse trees in-memory
+
+** Actionable Alternatives (Short-Term)
+
+*** Option 1: Improve lineTracker (Current)
+Current =lineTracker= in =pkg/parser/org.go= scans lines sequentially.
+
+Optimizations:
+- Pre-build line offset index: O(n) once, O(1) lookup
+- Use string matching with heading prefix (=***=) for faster scan
+- Cache parsed results per file (keyed by SHA256)
+
+#+BEGIN_SRC go
+type lineIndex struct {
+    offsets []int  // byte offset of each line start
+    lines   []string
+}
+
+func (idx *lineIndex) LineAt(offset int) int {
+    return sort.Search(len(idx.offsets), func(i int) bool {
+        return idx.offsets[i] > offset
+    })
+}
+#+END_SRC
+
+*** Option 2: Fork go-org with Position Tracking
+Emacs org-element tracks these properties (from =org-element-api.org=):
+- =:begin=, =:end= - element boundaries
+- =:contents-begin=, =:contents-end= - inner content
+- =:post-affiliated=, =:post-blank= - precise positions
+
+Fork strategy:
+1. Add =Begin int=, =End int= fields to each Node type
+2. Modify lexer to track byte positions during tokenization
+3. Propagate positions through parse tree construction
+
+Effort: ~2-3 weeks, ongoing maintenance burden.
+
+*** Option 3: Hybrid Pre-parser
+Use simple regex/scanner to extract positions, go-org for semantics:
+
+#+BEGIN_SRC go
+// Fast heading scanner (positions only)
+var headingRe = regexp.MustCompile(`(?m)^(\*+)\s+(.*)$`)
+
+func scanHeadings(content []byte) []HeadingPos {
+    matches := headingRe.FindAllSubmatchIndex(content, -1)
+    // Returns line positions without semantic parsing
+}
+
+// Then enrich with go-org for TODO, tags, properties
+#+END_SRC
+
+Pros: No fork, composable, fast position lookup
+Cons: Two-pass parsing, potential sync issues
+
+*** Option 4: grafov/gorg Evaluation
+https://github.com/grafov/gorg focuses on parse+manipulate+generate (not export).
+
+Needs investigation:
+- [ ] Does it expose position info internally?
+- [ ] Can we contribute position tracking upstream?
+- [ ] Tree manipulation API useful for surgical edits?
+
+** Recommendation
+
+*Short-term (now)*: Implement Option 1 (line index) + Option 3 (hybrid scanner)
+*Medium-term (Q2)*: Re-evaluate tree-sitter-org maturity
+*Long-term (if needed)*: Fork go-org for full position support

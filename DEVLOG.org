@@ -1,371 +1,132 @@
-#+TITLE: orgx-cli Development Log
+:PROPERTIES:
+:ID:       devlog:orgx-cli-index
+:END:
+#+TITLE: orgx-cli Development Index
+#+DATE: 2025-12-19
 #+STARTUP: overview
+#+FILETAGS: :devlog:index:
+#+OPTIONS: ^:{} _:{}
 
-* [2026-01-06] Markdown Stable IDs + Safe Title Writes                 :BREAKING:RELIABILITY:
-:PROPERTIES:
-:ID: devlog-2026-01-06-markdown-stable-ids
-:END:
+* Quick Context
 
-** Context
-orgx-cli needs stable refs (=::ID:=) for safe, repeatable edits; Markdown previously only had hash refs (=::H:=) and line addressing was inconsistent.
+orgx-cli: Context-efficient CLI for LLMs to work with Org and Markdown.
 
-** Why
-Hash refs in Markdown are fragile and Markdown spans were byte offsets, which blocked safe line-scoped writes (=orgx set= hard-disabled Markdown writes).
+| Stack | Tech |
+|-------+------|
+| Language | Go 1.23+ |
+| Parsers | go-org + goldmark |
+| Pattern | gh-cli (noun-verb grammar) |
+| Output | JSON (agents), text (humans) |
 
-** What
-- =BREAKING= Standardized Markdown =span= to 1-based line numbers (like Org) in JSON IR
-- Markdown headings can carry stable IDs via adjacent marker: =<!-- orgx-id: <id> -->=; parser emits =path::ID:<id>= and populates =props.ID=
-- =orgx id ensure= supports Markdown by inserting the marker right after the heading (Org behavior unchanged: PROPERTIES drawer + =:ID:=)
-- =orgx id list= / =orgx id check= scan =.org= and =.md= files
-- Enabled Markdown writes for =orgx set= and =orgx heading set= (title changes only, requires =::ID:= ref)
+Core insight: LLMs have limited context. Every token counts.
 
-** How
-*** Commands
-#+BEGIN_SRC bash
-go test ./...
-#+END_SRC
-
-** Decisions
-| Decision                                      | Alternatives                                  | Rationale                                                     | DRI  | Timestamp (UTC)         |
-|-----------------------------------------------+-----------------------------------------------+---------------------------------------------------------------+------+-------------------------|
-| Markdown ID storage uses HTML comment marker  | `{#id}` attribute; inline HTML anchor tags    | Renderer-safe, low-noise, easy to inject/parse near heading    | eric | 2026-01-06T04:47:13Z |
-| Markdown writes require =::ID:= refs          | Allow =::H:= writes                             | =::H:= is unstable; safe writes need stable addressing         | eric | 2026-01-06T04:47:13Z |
-
-** Risks                                                            :SECURITY:
-| Risk                                              | Mitigation                                           | Owner | Status |
-|---------------------------------------------------+------------------------------------------------------+-------+--------|
-| External consumers rely on Markdown =span= being byte offsets | Marked =BREAKING=; keep edits line-scoped and stable | eric  | Open   |
-| Users delete the marker comment and lose stability | =orgx id ensure= restores markers                     | eric  | Open   |
-
-** Rollback
-*** Trigger
-- Downstream tooling breaks due to Markdown =span= unit change
-- Markdown writes corrupt headings or fail to locate refs reliably
-
-*** Procedure
-1. Revert changes in =pkg/parser/md.go= and Markdown branches in =pkg/cmd/set/set.go= / =pkg/cmd/heading/set/set.go=
-2. Revert Markdown support in =pkg/cmd/id/*.go= (ensure/list/check)
-3. Data impact: reversible (comment markers added to Markdown files)
-
-** Tests
-- Added/updated: =pkg/parser/md_test.go=, =pkg/cmd/id/ensure_test.go=, =pkg/cmd/set/set_test.go=
-
-* [2026-01-06] Tree-sitter Reference Checkout for Parser R&D        :RELIABILITY:PERF:
-:PROPERTIES:
-:ID: devlog-2026-01-06-tree-sitter-reference
-:END:
-
-** Context
-orgx-cli parses org-mode via go-org and markdown via goldmark for IR extraction, heading lookup, and safe in-place edits.
-
-** Why
-Current markdown parsing and span handling are brittle for edits and cross-tooling; tree-sitter provides byte-accurate, error-tolerant syntax trees with stable node spans and incremental parsing.
-
-** What
-- Added a local reference checkout of tree-sitter core at =reference/tree-sitter= (commit =17e3c7a5c56527a179fa6e37ce7ee934493e5047=, =v0.26.3-26-g17e3c7a5=, Cargo version =0.27.0=) for parser evaluation in orgx-cli work
-
-** How
-*** Commands
-#+BEGIN_SRC bash
-# Verify pinned tree-sitter core checkout (from worktree/orgx-cli)
-git -C ../../reference/tree-sitter remote -v
-git -C ../../reference/tree-sitter rev-parse HEAD
-git -C ../../reference/tree-sitter describe --tags --always
-rg -n '^version\\s*=' ../../reference/tree-sitter/Cargo.toml
-#+END_SRC
-
-** Decisions
-| Decision                                        | Alternatives                                         | Rationale                                                        | DRI  | Timestamp (UTC)         |
-|-------------------------------------------------+------------------------------------------------------+------------------------------------------------------------------+------+-------------------------|
-| Keep tree-sitter core as a local =reference/= checkout (not vendored into orgx-cli yet) | Git submodule; vendor C sources into repo; skip tree-sitter and improve goldmark-only pipeline | Keep orgx-cli repo clean while we validate grammar + Go binding choice and IR mapping | eric | 2026-01-06T04:47:13Z |
-
-** Risks                                                            :SECURITY:
-| Risk                                        | Mitigation                                              | Owner | Status |
-|---------------------------------------------+---------------------------------------------------------+-------+--------|
-| Grammar/binding choice locks us into awkward APIs or licensing surprises | Keep reference-only until we pick a binding + grammar set and validate packaging | eric  | Open   |
-| Byte-offset spans drift when we reserialize markdown/org differently from parser | Keep edits line-scoped; use parser spans only for lookup/anchoring | eric  | Open   |
-
-** WIP
-- [ ] Decide grammar scope: markdown only vs org + markdown (tree-sitter-markdown, tree-sitter-org)
-- [ ] Evaluate Go integration: Cgo bindings vs WASM (packaging, performance, portability)
-- [ ] Define IR contract: mapping tree-sitter nodes → orgx IR (heading IDs, spans, links, code blocks)
-
-** Links
-- Tree-sitter: https://github.com/tree-sitter/tree-sitter
-- Local checkout: ../../reference/tree-sitter
-
-* [2025-12-27] Code Review Fixes + Architecture Decisions            :BREAKING:RELIABILITY:
-:PROPERTIES:
-:ID: devlog-2025-12-27-code-review
-:END:
-
-** Context
-orgx-cli is a Go CLI tool for working with org-mode and markdown files, inspired by gh-cli's design. Context-efficient interface for LLMs to work with structured documents.
-
-** Why
-NAK code review identified critical bugs in =set= command: non-TTY safety gate missing, fuzzy heading matching, non-deterministic tag sorting, global string replacement causing corruption.
-
-** What
-- =BREAKING= Non-TTY safety: writes require =--yes= in non-interactive mode (pkg/cmd/set/set.go, pkg/cmd/heading/set/set.go)
-- =RELIABILITY= Position-based heading lookup using =Span.Start= from parser instead of =strings.Contains= (pkg/cmd/heading/shared/lookup.go)
-- =RELIABILITY= Line-based editing at specific index instead of =strings.Replace= (pkg/cmd/set/set.go, pkg/cmd/heading/set/set.go)
-- Tag sorting with =slices.Sort()= for deterministic output (pkg/cmd/heading/set/set.go)
-- Removed misleading =--fields= flag that was accepted but non-functional (pkg/cmdutil/json_flags.go)
-- Fixed loose ref matching: =strings.Contains= → =strings.HasSuffix= (pkg/cmd/heading/shared/lookup.go)
-- Added ~/path expansion via new =ExpandPath()= helper (pkg/cmd/heading/shared/lookup.go)
-- Eliminated double file reads: new =ParseFileContent()= and =FindHeadingFromContent()= (pkg/parser/parser.go)
-
-** How
-*** Steps
-1. Added TTY check in write commands with =io.CanPrompt()= guard
-2. Modified heading lookup to use =heading.Span.Start= from parser AST
-3. Converted global string replacement to line-index-based editing using =findHeadingLine()=
-4. Applied =slices.Sort()= to tag slices before serialization
-5. Removed unused =--fields= flag definition and help text
-6. Changed ref suffix matching from substring to proper suffix check
-7. Added home directory expansion using =os.UserHomeDir()= + =filepath.Join()=
-8. Refactored parser interface to accept =[]byte= content directly
-
-*** Commands
-#+BEGIN_SRC bash
-# Before: silent writes in non-TTY mode (DANGEROUS)
-orgx set file.org::/Path --todo DONE < /dev/null  # would silently write
-
-# After: requires explicit confirmation
-orgx set file.org::/Path --todo DONE --yes < /dev/null  # safe
-#+END_SRC
-
-*** Diffs
-#+BEGIN_SRC diff
---- a/pkg/cmd/heading/set/set.go
-+++ b/pkg/cmd/heading/set/set.go
-@@ -85,6 +85,11 @@ func setRun(opts *Options) error {
-        }
-
-+       if !opts.DryRun && !opts.Yes && !opts.IO.CanPrompt() {
-+               return cmdutil.NewFlagError("--yes required in non-interactive mode")
-+       }
-+
-        // Use position-based lookup instead of title matching
--       doc, heading, err := shared.FindHeading(origPath, selector)
-+       doc, heading, err := shared.FindHeadingFromContent(content, selector)
-
---- a/pkg/cmd/heading/shared/lookup.go
-+++ b/pkg/cmd/heading/shared/lookup.go
-@@ -15,7 +15,7 @@ func MatchesSelector(ref, selector string) bool {
-                return true
-        }
-        // Check suffix match for more specific selectors
--       return strings.Contains(ref, selector)
-+       return strings.HasSuffix(ref, selector)
- }
-#+END_SRC
-
-*** Data/Schema Notes                                         :SCHEMA:MIGRATION:
-N/A - no schema changes
-
-*** API Contract                                                     :BREAKING:
-- =orgx set= now errors in non-interactive mode without =--yes= flag
-- Previously silently wrote files in pipelines/scripts
-- Migration: add =--yes= to all non-interactive invocations
-
-** Result
-*** Outcome
-All NAK review findings resolved. =set= command now safe for non-interactive use, deterministic output, correct heading resolution.
-
-*** Metrics                                                             :PERF:
-N/A - correctness fixes, no performance measurements
-
-*** Tests
-- Added: N/A (fixes to existing code)
-- Updated: pkg/cmd/set/set_test.go (validation for new --yes requirement)
-- Coverage delta: +0% (existing tests, behavior corrections)
-
-*** Observability
-N/A - CLI tool, no runtime observability
-
-** Decisions
-| Decision                     | Alternatives                      | Rationale                                                      | DRI      | Timestamp (UTC)     |
-|------------------------------+-----------------------------------+----------------------------------------------------------------+----------+---------------------|
-| No implicit ID writes        | Auto-add IDs on read commands     | Reads must remain pure; mutations explicit only                | lroolle  | 2025-12-27T00:00:00 |
-| Noun-verb grammar (gh-style) | Verb-only (git-style)             | Better namespacing, clearer for agents, aliases for humans     | lroolle  | 2025-12-27T00:00:00 |
-| Three-tier ref stability     | Binary (stable/unstable)          | Allows read-only use of fragile refs with warnings             | lroolle  | 2025-12-27T00:00:00 |
-| Position-based heading match | Title-based fuzzy matching        | Prevents wrong heading edits when duplicate titles exist       | lroolle  | 2025-12-27T00:00:00 |
-| Line-index editing           | AST regeneration / global replace | Preserves formatting, predictable behavior                     | lroolle  | 2025-12-27T00:00:00 |
-
-** Risks                                                            :SECURITY:
-| Risk                          | Mitigation                                  | Owner   | Status   |
-|-------------------------------+---------------------------------------------+---------+----------|
-| Breaking scripts using =set=  | Document migration, error msg points to fix | lroolle | Accepted |
-| Markdown line number mismatch | Document limitation, org-files prioritized  | lroolle | Accepted |
-
-** Rollback
-*** Trigger
-- Users report cannot run =set= in scripts despite =--yes= flag
-- Heading edits fail systematically with "not found" errors
-- Tag ordering changes break downstream parsers
-
-*** Procedure
-1. =git revert= commits in pkg/cmd/set/, pkg/cmd/heading/set/, pkg/cmd/heading/shared/
-2. Data impact: none (CLI tool, no persistent state)
-
-** WIP
-- [ ] Implement =orgx id ensure= command for adding IDs to headings without them
-- [ ] Add fragility warnings to write commands using non-ID refs (::/, ::H:)
-- [ ] Wire up noun-verb command structure via Cobra command groups
-- [ ] Consolidate duplicate set.go files (pkg/cmd/set/ vs pkg/cmd/heading/set/)
-- [ ] Add =orgx heading= subcommands: list, view, set (noun-verb)
-- [ ] Add =orgx file= subcommands: parse, outline, validate (noun-verb)
-- [ ] Add =orgx link= subcommands: list, backlinks, broken (noun-verb)
-
-** Links
-- Issues/PRs: N/A (pre-release)
-- Artifacts: N/A
-- Docs/Runbooks: /Users/eric/wrk/src/github.com/lroolle/WIP/251219_orgx-init/worktree/orgx-cli/CLAUDE.md
-- Review: NAK code review (verbal)
-
-** Notes
-*** Assumptions
-- go-org library uses 1-based line numbers (confirmed via testing)
-- Markdown parser stores byte offsets in =Span=, not line numbers (known limitation)
-- org files are primary use case; markdown support secondary
-
-*** Constraints
-- Must maintain zero external runtime dependencies (stdlib + go-org + goldmark only)
-- Must preserve exact file formatting (whitespace, comments, non-heading content)
-- Output must be deterministic for agent parsability
-
-*** Open Questions
-- Should =orgx id ensure= generate UUIDs or short hashes? (UUIDs chosen for org-roam compat)
-- How to handle ID conflicts across files? (Error on duplicate, let user resolve)
-- Markdown heading hash stability: include children in hash? (Yes, for stability)
-
-*** Gotchas
-- go-org AST uses 1-based line numbers, Go file I/O uses 0-based indexing
-- Duplicate heading titles break title-based matching (now fixed with position-based)
-- Map iteration order is random in Go (tags now explicitly sorted)
-- =strings.Replace(s, old, new, -1)= replaces ALL occurrences (now line-scoped)
-
-** Architecture: Core Contracts Established
-*** Five Immutable Rules
-1. =READS NEVER WRITE= - no implicit mutations during get/peek/find
-2. =WRITES ARE EXPLICIT= - require =--yes= in non-interactive mode
-3. =REFS HAVE POLICIES= - stable (::ID:) vs fragile (::/path, ::H:hash)
-4. =OUTPUT IS DETERMINISTIC= - sorted, stable schema, no randomness
-5. =GRAMMAR IS NOUN-VERB= - =orgx <noun> <verb>= with legacy aliases
-
-*** Ref Stability Hierarchy
-| Level     | Pattern              | Example                    | Write Policy      |
-|-----------+----------------------+----------------------------+-------------------|
-| STABLE    | =path::ID:<uuid>=    | =file.org::ID:abc-123=     | Safe, encouraged  |
-| FRAGILE   | =path::/outline=     | =file.org::/Proj/Design=   | Warn, allow       |
-| FRAGILE   | =path::H:<hash>=     | =README.md::H:a1b2c3=      | Warn, allow       |
-| AMBIGUOUS | bare path            | =file.org=                 | Error, reject     |
-
-*** Noun-Verb Taxonomy
 #+BEGIN_SRC text
-orgx <noun> <verb> [target] [flags]
-
-file:
-  - list      (stats for .org/.md files in dir)
-  - parse     (full IR output)
-  - outline   (structure only, alias: peek)
-  - validate  (lint, check refs)
-
-heading:
-  - list      (all headings with filters)
-  - view      (single heading, alias: get)
-  - set       (modify heading, alias: set)
-  - tree      (hierarchical view)
-
-id:
-  - ensure    (add IDs to headings missing them)
-  - list      (all IDs in workspace)
-  - check     (validate uniqueness)
-
-link:
-  - list      (outgoing links from file/heading)
-  - backlinks (incoming links to target)
-  - broken    (dead refs)
-
-ws:
-  - add       (register workspace)
-  - list      (show all workspaces)
-  - use       (set default)
-  - show      (current workspace config)
+Old way: Read 2000-line file -> mental parse -> Edit
+New way: orgx peek (50 tokens) -> orgx get ref (100 tokens) -> orgx set ref (0 tokens)
 #+END_SRC
 
-*** Legacy Agent Aliases (preserved for backward compat)
-- =peek= → =file outline=
-- =get= → =heading view=
-- =set= → =heading set=
-- =find= → =heading list=
-- =ls= → =file list=
+Core module: =pkg/= - parser, IR, commands
+Entry point: =cmd/orgx/main.go=
 
-** Technical Debt
-*** TODO Consolidate duplicate set.go files
-Two implementations exist:
-- =pkg/cmd/set/set.go= (root-level command)
-- =pkg/cmd/heading/set/set.go= (noun-verb subcommand)
+* Design Principles
 
-Recommendation: deprecate root-level, migrate to noun-verb.
+Accumulated wisdom from dev sessions. Read before making changes.
 
-*** TODO Add integration tests for non-TTY mode
-Current tests use =iostreams.Test()= which simulates TTY. Need explicit non-TTY test cases.
+** Immutable Rules
+#+BEGIN_QUOTE
+1. READS NEVER WRITE - no implicit mutations during get/peek/find
+2. WRITES ARE EXPLICIT - require --yes in non-interactive mode
+3. REFS HAVE POLICIES - stable (::ID:) vs fragile (::/path, ::H:hash)
+4. OUTPUT IS DETERMINISTIC - sorted, stable schema, no randomness
+5. GRAMMAR IS NOUN-VERB - =orgx <noun> <verb>= with legacy aliases
+#+END_QUOTE
 
-*** TODO Document markdown line number limitation
-Markdown parser (goldmark) provides byte offsets, not line numbers. Current workaround: scan file to convert offset → line. Document as known limitation.
+** Ref Philosophy
+- =::ID:= refs are stable (survive renames)
+- =::/outline= and =::H:hash= are fragile (break on edits)
+- Write commands should warn on fragile refs
+- Agent-friendly: stable refs enable repeatable workflows
 
-* [2026-01-08 Wed] Design Direction: Agent-First Timestamp & State Management
+** Parser Decisions
+- go-org = 80/20 org support, pure Go, batch-only
+- goldmark = full GFM, batch-only
+- tree-sitter = deferred (grammar immaturity, CGO overhead)
+- Position tracking via lineTracker workaround
 
-** Context
+** Agent-First Philosophy
+- Token efficiency over human convenience
+- Composable commands (pipe-friendly)
+- JSON output for machine consumption
+- Human aliases preserved for convenience
 
-Discussion on how to handle timestamps and state management in orgx.
-Explored org-roam, org-agenda, Logseq as inspiration.
+** I/O Model
+- stdout = data (text slice or JSON)
+- stderr = UX (warnings, prompts, progress, diff previews)
+- Rule: in =--json= mode, stdout MUST be valid JSON only
 
-** Decision
+** Output Size Controls
+Every command must support agent-friendly truncation:
+- List commands: =--limit=, =--max-depth=
+- Slice commands: =--max-bytes=, =--max-lines=, =--context=
+- =--full= disables truncation (danger: huge output)
 
-Agent-first, not human-UI-first.
+* Roadmap
+:PROPERTIES:
+:UPDATED: [2026-01-08]
+:END:
 
-- orgx = CLI for agents (token-efficient, composable)
-- Logseq = inspiration for concepts, not a dependency
-- Build for agent-to-agent orchestration
-- Human in the loop, but agents do the orchestration
+** [#A] Priority: Ship It
+- [X] Core commands: peek, get, set, find, ls
+- [X] Non-TTY safety (--yes flag)
+- [X] Markdown stable IDs (<!-- orgx-id: --> marker)
+- [ ] =orgx id ensure= polish and testing
 
-** Key Concepts from org-agenda/org-roam/Logseq
+** [#B] Priority: Polish
+- [ ] State change logging (LOGBOOK support)
+- [ ] Timestamp flags (--scheduled, --deadline)
+- [ ] =orgx capture= command
+- [ ] Fragility warnings for non-ID writes
 
-- State transitions: IDEA → TODO → STRT → DONE (with WAIT/HOLD)
-- Timestamps: SCHEDULED, DEADLINE, CREATED, CLOSED
-- State change logging: LOGBOOK drawer
-- Daily notes pattern: date-scoped files
-- Block/heading linking: stable refs
+** [#C] Priority: Nice to Have
+- [ ] Link graph (backlinks, broken refs)
+- [ ] Workspace management
+- [ ] Tree-sitter hybrid parser (pending grammar maturity)
 
-** TODO States (user's Emacs config)
+* Session Log Index
 
-IDEA  - captured, not actionable
-TODO  - committed, ready to work
-PROJ  - project container
-LOOP  - recurring
-STRT  - actively working
-WAIT  - blocked on external
-HOLD  - paused intentionally
-DONE  - completed
-KILL  - cancelled
+Detailed devlogs in =docs/devlogs/=. Newest first.
 
-** Proposed Features
+** 2026-01-08
+- [[file:docs/devlogs/devlog-260108-state-timestamps-spec.org][State & Timestamps Spec]] - GTD workflow, LOGBOOK, capture/promote commands, implementation phases
 
-1. State change logging (auto-append to LOGBOOK)
-2. Timestamp flags (--scheduled, --deadline, --created)
-3. State-aware queries (--todo WAIT, --after DATE)
-4. Capture command (orgx capture "text" --to FILE)
-5. Promote/refile (orgx promote ref --to FILE)
-6. Log/history view (orgx log ref)
+** 2026-01-06
+- [[file:docs/devlogs/devlog-260106-markdown-stable-ids.org][Markdown Stable IDs]] - =BREAKING= span to line numbers, =<!-- orgx-id: -->= marker, safe Markdown writes
 
-** Spec
+** 2026-01-05
+- [[file:docs/devlogs/devlog-260105-tree-sitter-evaluation.org][Tree-sitter Evaluation]] - Parser research, grammar survey, decision to defer
 
-See docs/SPEC-state-timestamps.md for full implementation details.
+** 2025-12-27
+- [[file:docs/devlogs/devlog-251227-code-review-fixes.org][Code Review Fixes]] - =BREAKING= non-TTY safety, position-based edits, architecture decisions
 
-** Next
+* Command Reference (Quick)
 
-- [ ] Review spec, prioritize phases
-- [ ] Implement Phase 1 (timestamp support)
+#+BEGIN_SRC text
+orgx peek <path>              # Structure only (low tokens)
+orgx get <ref>                # Specific section
+orgx find <query> --in <dir>  # Search across files
+orgx set <ref> [flags]        # Modify heading
+orgx ls [path]                # List files with stats
+
+Noun-verb equivalents:
+  file outline = peek
+  heading view = get
+  heading set = set
+  heading list = find
+  file list = ls
+#+END_SRC
+
+* Links
+
+- [[file:CLAUDE.md][CLAUDE.md]] - Project memory + devlog workflow
+- [[file:docs/PLAN.md][PLAN.md]] - Original project plan
+- [[file:README.md][README.md]] - User-facing docs

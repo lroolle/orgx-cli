@@ -1,0 +1,246 @@
+:PROPERTIES:
+:ID: devlog:260108-state-timestamps-spec
+:END:
+#+TITLE: State Management & Timestamp Features Spec
+#+DATE: [2026-01-08]
+#+FILETAGS: :devlog:spec:gtd:agent:
+
+* Context
+
+orgx lacks timestamp awareness and state transition logging. Current commands (peek, get, find, set) can't support GTD workflow where items flow: INBOX -> BACKLOG -> devlog.
+
+* Problem
+
+Users maintain task flow across files but orgx can't:
+1. Log state transitions (violates Org LOGBOOK convention)
+2. Set timestamps/deadlines programmatically
+3. Query by state or date range
+4. Capture with proper metadata
+5. Move items between files with state changes
+
+This breaks LLM-human collaboration where agents should maintain audit trails.
+
+* TODO State Model
+
+#+BEGIN_SRC text
+User's Emacs config states:
+
+IDEA  - captured, not yet committed
+TODO  - committed, actionable
+PROJ  - container for subtasks
+LOOP  - recurring task
+STRT  - actively working (in-progress)
+WAIT  - blocked on external dependency
+HOLD  - paused by user decision
+DONE  - completed successfully
+KILL  - cancelled/abandoned
+
+Transitions:
+IDEA -> TODO -> STRT -> DONE
+            |       |
+          WAIT   HOLD
+            |       |
+          TODO   STRT
+            |
+          KILL
+#+END_SRC
+
+* Proposed Features
+
+** F1: Automatic State Change Logging
+
+When =orgx set REF --todo NEWSTATE= changes state:
+- Parse current TODO state
+- Append transition to LOGBOOK drawer
+- Create drawer if missing
+
+#+BEGIN_SRC org
+* STRT Fix auth bug
+:PROPERTIES:
+:ID: abc123
+:END:
+:LOGBOOK:
+- State "STRT"       from "TODO"       [2026-01-08 Wed 14:30]
+- State "TODO"       from "IDEA"       [2026-01-07 Tue 09:15]
+:END:
+#+END_SRC
+
+Edge cases:
+- First state: log as =State "TODO" from "" [timestamp]=
+- Same state: no-op (idempotent)
+- =--no-log= flag: skip logging
+
+** F2: Timestamp Management
+
+New flags for =orgx set=:
+#+BEGIN_SRC text
+--scheduled DATE       Set SCHEDULED: <DATE>
+--deadline DATE        Set DEADLINE: <DATE>
+--timestamp            Add inactive [DATE] to body
+--created              Set :CREATED: property
+--closed               Set :CLOSED: (auto on DONE/KILL)
+#+END_SRC
+
+Date input formats:
+- ISO8601: =2026-01-08=, =2026-01-08T14:30=
+- Relative: =today=, =tomorrow=, =+1d=, =+2w=, =-3d=
+- Org format: =<2026-01-08 Wed>=
+
+Auto-close: when state -> DONE or KILL, add =CLOSED: [timestamp]=
+
+** F3: State-aware Queries
+
+New =orgx find= flags:
+#+BEGIN_SRC text
+--todo STATE[,STATE...]     Filter by TODO state
+--after DATE                Items modified after
+--before DATE               Items modified before
+--scheduled-after DATE      SCHEDULED after date
+--deadline-before DATE      DEADLINE before date
+--state-changed-after DATE  Last state change after date
+#+END_SRC
+
+Examples:
+#+BEGIN_SRC bash
+orgx find --todo WAIT --in .                    # blocked tasks
+orgx find --deadline-before today --in BACKLOG  # overdue
+orgx find --todo STRT --state-changed-after -7d # recently started
+#+END_SRC
+
+** F4: Capture Command
+
+#+BEGIN_SRC bash
+orgx capture TEXT --to FILE [--todo STATE] [--tags T1,T2] [--deadline DATE]
+#+END_SRC
+
+Creates new heading at EOF:
+#+BEGIN_SRC org
+* IDEA Review Gemini API docs
+:PROPERTIES:
+:CREATED: [2026-01-08 Wed 14:30]
+:END:
+#+END_SRC
+
+** F5: Promote/Refile Command
+
+#+BEGIN_SRC bash
+orgx promote REF --to FILE [--todo STATE]
+#+END_SRC
+
+Moves heading between files with state transition logging:
+#+BEGIN_SRC bash
+orgx promote INBOX.org#12 --to BACKLOG.org --todo TODO
+# Moved: INBOX.org#12 -> BACKLOG.org#47
+# Logged: State "TODO" from "IDEA" [2026-01-08 Wed 14:30]
+#+END_SRC
+
+** F6: Log/History View
+
+#+BEGIN_SRC bash
+orgx log REF [--format text|json]
+#+END_SRC
+
+Output:
+#+BEGIN_SRC text
+2026-01-08 Wed 14:30  STRT <- TODO
+2026-01-07 Tue 09:15  TODO <- IDEA
+2026-01-06 Mon 16:00  IDEA <- (created)
+#+END_SRC
+
+* Decisions
+
+| Decision | Alternatives | Rationale |
+|----------+--------------+-----------|
+| LOGBOOK drawer for state history | Custom property | Org convention, Emacs compatible |
+| Relative dates (+1d, +2w) | Only ISO8601 | Agent-friendly ("schedule in 3 days") |
+| Auto-close on DONE/KILL | Manual only | Matches Emacs behavior, less toil |
+| Capture appends at EOF | Insert by priority | Avoid disrupting structure, refile later |
+| Preserve LOGBOOK on promote | Clear on move | Audit trail across file boundaries |
+| ISO8601 in JSON output | Org format strings | Unambiguous for LLM parsing |
+
+* Risks
+
+| Risk | Mitigation | Status |
+|------+------------+--------|
+| Concurrent edits (Emacs + orgx) | Detect mtime change before write | Open |
+| Large LOGBOOK (100+ entries) | --limit flag on log command | Open |
+| State typos (STAT vs STRT) | Levenshtein suggest, require confirm | Open |
+
+* Implementation Phases
+
+** Phase 1: Timestamp Support
+- Date parsing library (github.com/araddon/dateparse)
+- --scheduled, --deadline, --created flags
+- Timestamp fields in JSON output
+
+** Phase 2: State Logging
+- LOGBOOK drawer parsing/writing
+- State change logging in set command
+- --no-log escape hatch
+- log command
+
+** Phase 3: Queries
+- --todo, --after, --before flags on find
+- State/date filtering
+- LOGBOOK parsing for --state-changed-*
+
+** Phase 4: Workflow Commands
+- capture command
+- promote command
+- Config file support
+- Timezone handling
+
+* Example Workflow
+
+#+BEGIN_SRC bash
+# Capture idea
+orgx capture "Review Gemini API" --to INBOX.org
+# Created: INBOX.org#47
+
+# Promote to backlog with deadline
+orgx promote INBOX.org#47 --to BACKLOG.org --todo TODO --deadline +3d
+# Logged: State "TODO" from "IDEA"
+
+# Start work
+orgx promote BACKLOG.org#12 --to devlog/260108.org --todo STRT
+# Logged: State "STRT" from "TODO"
+
+# Check progress
+orgx log devlog/260108.org#3
+# STRT <- TODO <- IDEA
+
+# Complete
+orgx set devlog/260108.org#3 --todo DONE
+# CLOSED: [2026-01-08 Wed 15:45]
+#+END_SRC
+
+* Config Schema
+
+#+BEGIN_SRC toml
+# ~/.config/orgx/config.toml
+[timestamps]
+timezone = "Asia/Singapore"
+
+[states]
+keywords = ["IDEA", "TODO", "PROJ", "LOOP", "STRT", "WAIT", "HOLD", "DONE", "KILL"]
+done_states = ["DONE", "KILL"]
+auto_close = true
+
+[capture]
+default_file = "~/org/INBOX.org"
+default_state = "IDEA"
+#+END_SRC
+
+* Gotchas
+
+- LOGBOOK is a drawer (=:LOGBOOK:= at column 0), not a property
+- Day-of-week in timestamps: compute from date, ignore input
+- go-org uses 1-based line numbers, Go I/O uses 0-based
+- Relative dates anchor to midnight in user's timezone
+- Windows CRLF: detect and preserve on write
+
+* Links
+
+- Org Manual: https://orgmode.org/manual/
+- GTD: https://en.wikipedia.org/wiki/Getting_Things_Done
+- go-org: https://github.com/niklasfasching/go-org

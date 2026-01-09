@@ -4,6 +4,53 @@
 
 ---
 
+## Devlog Workflow
+
+### Structure
+```
+DEVLOG.org              = INDEX (quick context, roadmap, session log links)
+docs/devlogs/*.org      = DETAILS (per-feature/session deep dives)
+```
+
+### Why
+- Index = token-efficient peek (~100 tokens for project context)
+- Details = on-demand (only load when working on that feature)
+- Design Principles = accumulated wisdom (don't repeat mistakes)
+- Session Log = linear traceability (newest first, resume anywhere)
+
+### Workflow for New Features/Sessions
+
+1. **Work first** - implement, debug, decide
+2. **Use dev-log-writer agent** - captures decisions, diffs, risks
+3. **Creates detailed devlog** - `docs/devlogs/devlog-YYMMDD-slug.org`
+4. **Update DEVLOG.org index** - add link under date in Session Log Index
+
+### Devlog Format (docs/devlogs/*)
+```org
+:PROPERTIES:
+:ID:       devlog:YYMMDD-slug
+:END:
+#+TITLE: Feature/Session Name
+#+DATE: [YYYY-MM-DD]
+#+FILETAGS: :devlog:tag1:tag2:
+
+* Context         (what problem we're solving)
+* Why             (why this approach)
+* What            (what changed - files, behavior)
+* How             (commands, diffs, schema notes)
+* Decisions       (table: decision | alternatives | rationale)
+* Risks           (table: risk | mitigation | status)
+* WIP             (remaining tasks)
+```
+
+### DEVLOG.org Index Sections
+- Quick Context - project summary (20 lines max)
+- Design Principles - accumulated wisdom (quotes + bullets)
+- Roadmap - prioritized TODO lists
+- Session Log Index - links to detailed logs by date
+
+---
+
 ## The Problem
 
 LLMs have limited context windows. Every token counts.

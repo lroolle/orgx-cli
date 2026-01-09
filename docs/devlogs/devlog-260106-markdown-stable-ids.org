@@ -1,0 +1,77 @@
+:PROPERTIES:
+:ID: devlog:260106-markdown-stable-ids
+:END:
+#+TITLE: Markdown Stable IDs + Safe Title Writes
+#+DATE: [2026-01-06]
+#+FILETAGS: :devlog:breaking:reliability:
+
+* Context
+
+orgx-cli needs stable refs (=::ID:=) for safe, repeatable edits. Markdown previously only had hash refs (=::H:=) and spans were byte offsets.
+
+* Why
+
+Hash refs are fragile. Byte-offset spans blocked safe line-scoped writes (=orgx set= hard-disabled Markdown writes).
+
+* What
+
+- =BREAKING= Standardized Markdown =span= to 1-based line numbers (like Org) in JSON IR
+- Markdown headings can carry stable IDs via adjacent marker: =<!-- orgx-id: <id> -->=
+- Parser emits =path::ID:<id>= and populates =props.ID=
+- =orgx id ensure= supports Markdown by inserting marker right after heading
+- =orgx id list= / =orgx id check= scan =.org= and =.md= files
+- Enabled Markdown writes for =orgx set= (title changes only, requires =::ID:= ref)
+
+* How
+
+** Markdown ID Format
+#+BEGIN_SRC markdown
+# My Heading
+<!-- orgx-id: unique-id-here -->
+
+Content here...
+#+END_SRC
+
+** Commands
+#+BEGIN_SRC bash
+# Add IDs to all headings in markdown file
+orgx id ensure README.md
+
+# List all IDs in workspace
+orgx id list --in ~/docs/
+
+# Check for duplicates
+orgx id check --in ~/docs/
+
+# Safe edit with stable ref
+orgx set README.md::ID:unique-id-here --title "New Heading" --yes
+#+END_SRC
+
+* Decisions
+
+| Decision                                      | Alternatives                                  | Rationale                                       |
+|-----------------------------------------------+-----------------------------------------------+-------------------------------------------------|
+| Markdown ID storage uses HTML comment marker  | ={#id}= attribute; inline anchor tags         | Renderer-safe, low-noise, easy to inject/parse  |
+| Markdown writes require =::ID:= refs          | Allow =::H:= writes                           | =::H:= is unstable; safe writes need stability  |
+
+* Risks
+
+| Risk                                              | Mitigation                                           | Status |
+|---------------------------------------------------+------------------------------------------------------+--------|
+| External consumers rely on Markdown =span= bytes  | Marked =BREAKING=; keep edits line-scoped and stable | Open   |
+| Users delete marker comment and lose stability    | =orgx id ensure= restores markers                    | Open   |
+
+* Rollback
+
+** Trigger
+- Downstream tooling breaks due to Markdown =span= unit change
+- Markdown writes corrupt headings or fail to locate refs reliably
+
+** Procedure
+1. Revert changes in =pkg/parser/md.go= and Markdown branches in =pkg/cmd/set/set.go=
+2. Revert Markdown support in =pkg/cmd/id/*.go=
+3. Data impact: reversible (comment markers added to Markdown files)
+
+* Tests
+
+- Added/updated: =pkg/parser/md_test.go=, =pkg/cmd/id/ensure_test.go=, =pkg/cmd/set/set_test.go=
