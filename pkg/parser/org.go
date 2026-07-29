@@ -2,21 +2,31 @@ package parser
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
+	"github.com/lroolle/orgx-cli/pkg/config"
 	"github.com/lroolle/orgx-cli/pkg/ir"
 	"github.com/niklasfasching/go-org/org"
 )
 
-type OrgParser struct{}
+type OrgParser struct {
+	StateKeywords []string // if set, uses these; otherwise loads from config
+}
 
 func (p *OrgParser) CanParse(path string) bool {
 	return strings.HasSuffix(strings.ToLower(path), ".org")
 }
 
 func (p *OrgParser) Parse(path string, content []byte) (*ir.Document, error) {
-	config := org.New()
-	doc := config.Parse(strings.NewReader(string(content)), path)
+	orgConf := org.New()
+	doc := orgConf.Parse(strings.NewReader(string(content)), path)
+
+	stateKeywords := p.StateKeywords
+	if len(stateKeywords) == 0 {
+		cfg := config.LoadOrDefault()
+		stateKeywords = cfg.GetStateKeywords()
+	}
 
 	irDoc := &ir.Document{
 		Path:    path,
@@ -31,7 +41,7 @@ func (p *OrgParser) Parse(path string, content []byte) (*ir.Document, error) {
 	}
 
 	lines := strings.Split(string(content), "\n")
-	headings := extractOrgHeadings(path, doc.Nodes, lines)
+	headings := extractOrgHeadings(path, doc.Nodes, lines, stateKeywords)
 	for _, h := range headings {
 		irDoc.Nodes = append(irDoc.Nodes, h)
 	}
@@ -46,16 +56,16 @@ func extractOrgTitle(doc *org.Document) string {
 	return ""
 }
 
-func extractOrgHeadings(path string, nodes []org.Node, lines []string) []*ir.Heading {
+func extractOrgHeadings(path string, nodes []org.Node, lines []string, stateKeywords []string) []*ir.Heading {
 	var headings []*ir.Heading
 	lineTracker := &lineTracker{lines: lines, lastLine: 0}
 
 	for _, node := range nodes {
 		if h, ok := node.(org.Headline); ok {
-			heading := convertOrgHeadline(path, h, lines, lineTracker)
+			heading := convertOrgHeadline(path, h, lines, lineTracker, stateKeywords)
 			headings = append(headings, heading)
 
-			children := extractOrgHeadingsWithTracker(path, h.Children, lines, lineTracker)
+			children := extractOrgHeadingsWithTracker(path, h.Children, lines, lineTracker, stateKeywords)
 			for _, child := range children {
 				heading.Children = append(heading.Children, child)
 			}
@@ -82,15 +92,15 @@ func (t *lineTracker) findHeadingLine(level int, title string) int {
 	return 0
 }
 
-func extractOrgHeadingsWithTracker(path string, nodes []org.Node, lines []string, tracker *lineTracker) []*ir.Heading {
+func extractOrgHeadingsWithTracker(path string, nodes []org.Node, lines []string, tracker *lineTracker, stateKeywords []string) []*ir.Heading {
 	var headings []*ir.Heading
 
 	for _, node := range nodes {
 		if h, ok := node.(org.Headline); ok {
-			heading := convertOrgHeadline(path, h, lines, tracker)
+			heading := convertOrgHeadline(path, h, lines, tracker, stateKeywords)
 			headings = append(headings, heading)
 
-			children := extractOrgHeadingsWithTracker(path, h.Children, lines, tracker)
+			children := extractOrgHeadingsWithTracker(path, h.Children, lines, tracker, stateKeywords)
 			for _, child := range children {
 				heading.Children = append(heading.Children, child)
 			}
@@ -100,18 +110,22 @@ func extractOrgHeadingsWithTracker(path string, nodes []org.Node, lines []string
 	return headings
 }
 
-func convertOrgHeadline(path string, h org.Headline, lines []string, tracker *lineTracker) *ir.Heading {
-	ref := buildOrgRef(path, h)
+func convertOrgHeadline(path string, h org.Headline, lines []string, tracker *lineTracker, stateKeywords []string) *ir.Heading {
 	title := renderOrgNodes(h.Title)
+	todo := h.Status
 
-	props := make(map[string]string)
-	if h.Properties != nil {
-		for _, kv := range h.Properties.Properties {
-			props[kv[0]] = kv[1]
-		}
+	// go-org only recognizes built-in states (TODO, DONE).
+	// Custom states like IDEA, STRT become part of the title.
+	// Extract them here.
+	if todo == "" {
+		todo, title = extractCustomState(title, stateKeywords)
 	}
 
-	scheduled, deadline := extractScheduling(h.Children)
+	props := extractProperties(h)
+	ref := buildOrgRef(path, props, title, stateKeywords)
+
+	scheduled, deadline, closed := extractScheduling(h.Children)
+	logbook := extractLogbook(h.Children)
 	bodyRaw := extractHeadlineBody(h)
 	links := extractOrgLinks(h.Children)
 
@@ -122,11 +136,13 @@ func convertOrgHeadline(path string, h org.Headline, lines []string, tracker *li
 		Ref:       ref,
 		Level:     h.Lvl,
 		Title:     title,
-		Todo:      h.Status,
+		Todo:      todo,
 		Tags:      h.Tags,
 		Props:     props,
 		Scheduled: scheduled,
 		Deadline:  deadline,
+		Closed:    closed,
+		Logbook:   logbook,
 		Body: ir.Body{
 			Raw: bodyRaw,
 		},
@@ -136,6 +152,42 @@ func convertOrgHeadline(path string, h org.Headline, lines []string, tracker *li
 			End:   lineNum,
 		},
 	}
+}
+
+func extractCustomState(title string, stateKeywords []string) (state, newTitle string) {
+	for _, kw := range stateKeywords {
+		prefix := kw + " "
+		if strings.HasPrefix(title, prefix) {
+			return kw, strings.TrimPrefix(title, prefix)
+		}
+	}
+	return "", title
+}
+
+func extractProperties(h org.Headline) map[string]string {
+	props := make(map[string]string)
+
+	// go-org puts properties in h.Properties when property drawer is
+	// immediately after headline. But when planning line (CLOSED/SCHEDULED/
+	// DEADLINE) is present, h.Properties is nil and the property drawer
+	// becomes an org.PropertyDrawer child node.
+	if h.Properties != nil {
+		for _, kv := range h.Properties.Properties {
+			props[kv[0]] = kv[1]
+		}
+		return props
+	}
+
+	// Check children for PropertyDrawer
+	for _, child := range h.Children {
+		if pd, ok := child.(org.PropertyDrawer); ok {
+			for _, kv := range pd.Properties {
+				props[kv[0]] = kv[1]
+			}
+			break
+		}
+	}
+	return props
 }
 
 func extractOrgLinks(nodes []org.Node) []*ir.Link {
@@ -208,29 +260,114 @@ func convertOrgLink(l org.RegularLink) *ir.Link {
 	}
 }
 
-func extractScheduling(nodes []org.Node) (scheduled, deadline string) {
+var planningLineRe = regexp.MustCompile(`^(CLOSED|SCHEDULED|DEADLINE):`)
+var planningTokenRe = regexp.MustCompile(`(CLOSED|SCHEDULED|DEADLINE):\s*(\[[^\]]+\]|<[^>]+>)`)
+
+func extractScheduling(nodes []org.Node) (scheduled, deadline, closed string) {
+	// Planning line must be first child(ren) before any drawer or body content.
+	// Once we see a drawer or non-planning paragraph, stop looking.
 	for _, node := range nodes {
+		// go-org parses planning as org.Keyword when immediately after headline
 		if kw, ok := node.(org.Keyword); ok {
 			switch kw.Key {
 			case "SCHEDULED":
 				scheduled = kw.Value
 			case "DEADLINE":
 				deadline = kw.Value
+			case "CLOSED":
+				closed = kw.Value
 			}
+			continue
 		}
+
+		// Stop at any drawer (PropertyDrawer, LOGBOOK, etc.)
+		if _, ok := node.(org.PropertyDrawer); ok {
+			break
+		}
+		if _, ok := node.(org.Drawer); ok {
+			break
+		}
+
+		// go-org may parse planning line as org.Paragraph
+		if para, ok := node.(org.Paragraph); ok {
+			text := strings.TrimSpace(renderOrgNodes(para.Children))
+			// Guard: line must START with a planning keyword to be a planning line
+			if !planningLineRe.MatchString(text) {
+				// Not a planning line, this is body content - stop
+				break
+			}
+			// Extract ALL planning tokens from the line (unanchored)
+			matches := planningTokenRe.FindAllStringSubmatch(text, -1)
+			for _, m := range matches {
+				switch m[1] {
+				case "SCHEDULED":
+					if scheduled == "" {
+						scheduled = m[2]
+					}
+				case "DEADLINE":
+					if deadline == "" {
+						deadline = m[2]
+					}
+				case "CLOSED":
+					if closed == "" {
+						closed = m[2]
+					}
+				}
+			}
+			continue
+		}
+
+		// Any other node type means we're past planning
+		break
 	}
 	return
 }
 
-func buildOrgRef(path string, h org.Headline) string {
-	if h.Properties != nil {
-		for _, kv := range h.Properties.Properties {
-			if kv[0] == "ID" {
-				return fmt.Sprintf("%s::ID:%s", path, kv[1])
+var stateChangeRe = regexp.MustCompile(`State\s+"([^"]*)"\s+from\s+"([^"]*)"\s+(\[.+?\])`)
+
+func extractLogbook(nodes []org.Node) []ir.StateChange {
+	var changes []ir.StateChange
+	for _, node := range nodes {
+		if drawer, ok := node.(org.Drawer); ok && drawer.Name == "LOGBOOK" {
+			for _, child := range drawer.Children {
+				text := extractTextFromNode(child)
+				matches := stateChangeRe.FindAllStringSubmatch(text, -1)
+				for _, m := range matches {
+					changes = append(changes, ir.StateChange{
+						NewState:  m[1],
+						OldState:  m[2],
+						Timestamp: m[3],
+					})
+				}
 			}
 		}
 	}
-	title := renderOrgNodes(h.Title)
+	return changes
+}
+
+func extractTextFromNode(node org.Node) string {
+	switch v := node.(type) {
+	case org.Paragraph:
+		return renderOrgNodes(v.Children)
+	case org.List:
+		var parts []string
+		for _, item := range v.Items {
+			parts = append(parts, extractTextFromNode(item))
+		}
+		return strings.Join(parts, "\n")
+	case org.ListItem:
+		return renderOrgNodes(v.Children)
+	case org.Text:
+		return v.Content
+	default:
+		return ""
+	}
+}
+
+func buildOrgRef(path string, props map[string]string, title string, stateKeywords []string) string {
+	if id, ok := props["ID"]; ok {
+		return fmt.Sprintf("%s::ID:%s", path, id)
+	}
 	return fmt.Sprintf("%s::/%s", path, sanitizeOutlinePath(title))
 }
 

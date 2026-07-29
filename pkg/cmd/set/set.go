@@ -10,8 +10,10 @@ import (
 
 	"github.com/lroolle/orgx-cli/pkg/cmd/heading/shared"
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
+	"github.com/lroolle/orgx-cli/pkg/config"
 	"github.com/lroolle/orgx-cli/pkg/iostreams"
 	"github.com/lroolle/orgx-cli/pkg/ir"
+	"github.com/lroolle/orgx-cli/pkg/orgtime"
 	"github.com/lroolle/orgx-cli/pkg/textutil"
 	"github.com/spf13/cobra"
 )
@@ -24,6 +26,11 @@ type SetOptions struct {
 	Title     string
 	Todo      string
 	Tags      []string
+	Scheduled string
+	Deadline  string
+	Created   bool
+	Closed    bool
+	NoLog     bool
 	DryRun    bool
 	Confirmed bool
 }
@@ -40,9 +47,19 @@ func NewCmdSet(f *cmdutil.Factory, runF func(*SetOptions) error) *cobra.Command 
 		Long: `Modify a heading's properties by reference.
 No need to read the file first - just specify what to change.
 
+State changes are logged to LOGBOOK drawer by default (use --no-log to skip).
+Auto-closes with CLOSED timestamp when transitioning to DONE/KILL states.
+
+Date formats for --scheduled and --deadline:
+  ISO8601:  2026-01-08, 2026-01-08T14:30
+  Relative: today, tomorrow, +1d, +2w, -3d
+  Org:      <2026-01-08 Thu>
+
 Examples:
   orgx set notes.org::ID:abc --todo DONE
   orgx set notes.org::/Projects --tags +urgent,-old
+  orgx set notes.org::ID:abc --scheduled +3d --deadline +1w
+  orgx set notes.org::ID:abc --todo STRT --no-log
   orgx set notes.org::ID:abc --title "New Title" --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,8 +73,13 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&opts.Title, "title", "", "Set title")
-	cmd.Flags().StringVar(&opts.Todo, "todo", "", "Set TODO state")
+	cmd.Flags().StringVar(&opts.Todo, "todo", "", "Set TODO state (logs to LOGBOOK)")
 	cmd.Flags().StringSliceVar(&opts.Tags, "tags", nil, "Set tags (+add, -remove)")
+	cmd.Flags().StringVar(&opts.Scheduled, "scheduled", "", "Set SCHEDULED date")
+	cmd.Flags().StringVar(&opts.Deadline, "deadline", "", "Set DEADLINE date")
+	cmd.Flags().BoolVar(&opts.Created, "created", false, "Add :CREATED: property")
+	cmd.Flags().BoolVar(&opts.Closed, "closed", false, "Add CLOSED timestamp")
+	cmd.Flags().BoolVar(&opts.NoLog, "no-log", false, "Skip LOGBOOK state logging")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview changes")
 	cmd.Flags().BoolVarP(&opts.Confirmed, "yes", "y", false, "Skip confirmation")
 
@@ -74,8 +96,8 @@ func setRun(opts *SetOptions) error {
 		if ref.RefType != shared.RefTypeID {
 			return fmt.Errorf("markdown writes require stable ::ID: refs; run: orgx id ensure %s --yes", ref.Path)
 		}
-		if opts.Todo != "" || len(opts.Tags) > 0 {
-			return fmt.Errorf("markdown writes support --title only (no --todo/--tags)")
+		if opts.Todo != "" || len(opts.Tags) > 0 || opts.Scheduled != "" || opts.Deadline != "" || opts.Created || opts.Closed {
+			return fmt.Errorf("markdown writes support --title only (no --todo/--tags/--scheduled/--deadline/--created/--closed)")
 		}
 	}
 
@@ -216,10 +238,17 @@ func applyChanges(content string, h *ir.Heading, opts *SetOptions) (string, []st
 	}
 
 	currentLine := lines[lineIdx]
+	cfg := config.LoadOrDefault()
+	now := time.Now().In(cfg.GetTimezone())
+
+	stateChanged := false
+	oldState := h.Todo
+	newState := opts.Todo
 
 	if opts.Todo != "" && opts.Todo != h.Todo {
 		currentLine = replaceTodoInLine(currentLine, h.Todo, opts.Todo)
 		changes = append(changes, fmt.Sprintf("TODO: %s → %s", h.Todo, opts.Todo))
+		stateChanged = true
 	}
 
 	if opts.Title != "" && opts.Title != h.Title {
@@ -236,7 +265,225 @@ func applyChanges(content string, h *ir.Heading, opts *SetOptions) (string, []st
 	}
 
 	lines[lineIdx] = currentLine
+
+	insertIdx := lineIdx + 1
+
+	if opts.Scheduled != "" || opts.Deadline != "" || opts.Closed || (stateChanged && cfg.IsDoneState(newState) && cfg.ShouldAutoClose()) {
+		planningLine, planningChanges, err := buildPlanningLine(h, opts, now, cfg, stateChanged, newState)
+		if err != nil {
+			return "", nil, err
+		}
+		if planningLine != "" {
+			existingPlanningIdx := findPlanningLine(lines, insertIdx)
+			if existingPlanningIdx >= 0 {
+				lines[existingPlanningIdx] = planningLine
+			} else {
+				lines = insertLine(lines, insertIdx, planningLine)
+				insertIdx++
+			}
+			changes = append(changes, planningChanges...)
+		}
+	}
+
+	propsInsertIdx := findPropsInsertPoint(lines, lineIdx)
+	if propsInsertIdx < 0 {
+		propsInsertIdx = insertIdx
+	}
+
+	if opts.Created {
+		ts := orgtime.Timestamp{Time: now, HasTime: true, Active: false}
+		lines, propsInsertIdx = ensureProperty(lines, lineIdx, propsInsertIdx, "CREATED", ts.String())
+		changes = append(changes, fmt.Sprintf("CREATED: %s", ts.String()))
+	}
+
+	if stateChanged && !opts.NoLog {
+		ts := orgtime.Timestamp{Time: now, HasTime: true, Active: false}
+		logEntry := orgtime.FormatStateChange(newState, oldState, ts)
+		lines, _ = ensureLogbookEntry(lines, lineIdx, logEntry)
+		changes = append(changes, fmt.Sprintf("LOGBOOK: State %q from %q", newState, oldState))
+	}
+
 	return textutil.JoinLines(lines, lineEnding), changes, nil
+}
+
+func buildPlanningLine(h *ir.Heading, opts *SetOptions, now time.Time, cfg *config.Config, stateChanged bool, newState string) (string, []string, error) {
+	var parts []string
+	var changes []string
+
+	scheduled := h.Scheduled
+	deadline := h.Deadline
+	closed := h.Closed
+
+	if opts.Scheduled != "" {
+		ts, err := orgtime.Parse(opts.Scheduled, now)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid --scheduled date: %w", err)
+		}
+		scheduled = ts.Format(true)
+		changes = append(changes, fmt.Sprintf("SCHEDULED: %s", scheduled))
+	}
+
+	if opts.Deadline != "" {
+		ts, err := orgtime.Parse(opts.Deadline, now)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid --deadline date: %w", err)
+		}
+		deadline = ts.Format(true)
+		changes = append(changes, fmt.Sprintf("DEADLINE: %s", deadline))
+	}
+
+	if opts.Closed || (stateChanged && cfg.IsDoneState(newState) && cfg.ShouldAutoClose()) {
+		ts := orgtime.Timestamp{Time: now, HasTime: true, Active: false}
+		closed = ts.String()
+		changes = append(changes, fmt.Sprintf("CLOSED: %s", closed))
+	}
+
+	if closed != "" {
+		parts = append(parts, "CLOSED: "+closed)
+	}
+	if scheduled != "" {
+		parts = append(parts, "SCHEDULED: "+scheduled)
+	}
+	if deadline != "" {
+		parts = append(parts, "DEADLINE: "+deadline)
+	}
+
+	if len(parts) == 0 {
+		return "", nil, nil
+	}
+	return strings.Join(parts, " "), changes, nil
+}
+
+func findPlanningLine(lines []string, startIdx int) int {
+	if startIdx >= len(lines) {
+		return -1
+	}
+	line := strings.TrimSpace(lines[startIdx])
+	if strings.HasPrefix(line, "CLOSED:") || strings.HasPrefix(line, "SCHEDULED:") || strings.HasPrefix(line, "DEADLINE:") {
+		return startIdx
+	}
+	return -1
+}
+
+func findPropsInsertPoint(lines []string, headingIdx int) int {
+	for i := headingIdx + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, ":PROPERTIES:") {
+			return i
+		}
+		if strings.HasPrefix(line, "CLOSED:") || strings.HasPrefix(line, "SCHEDULED:") || strings.HasPrefix(line, "DEADLINE:") {
+			continue
+		}
+		break
+	}
+	return -1
+}
+
+func ensureProperty(lines []string, headingIdx, insertIdx int, key, value string) ([]string, int) {
+	propsStart := -1
+	propsEnd := -1
+	for i := headingIdx + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if line == ":PROPERTIES:" {
+			propsStart = i
+			continue
+		}
+		if propsStart >= 0 && line == ":END:" {
+			propsEnd = i
+			break
+		}
+		if propsStart < 0 && !strings.HasPrefix(line, "CLOSED:") && !strings.HasPrefix(line, "SCHEDULED:") && !strings.HasPrefix(line, "DEADLINE:") {
+			break
+		}
+	}
+
+	propLine := fmt.Sprintf(":%s: %s", key, value)
+
+	if propsStart >= 0 && propsEnd >= 0 {
+		for i := propsStart + 1; i < propsEnd; i++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), ":"+key+":") {
+				lines[i] = propLine
+				return lines, insertIdx
+			}
+		}
+		lines = insertLine(lines, propsEnd, propLine)
+		return lines, insertIdx + 1
+	}
+
+	lines = insertLine(lines, insertIdx, ":END:")
+	lines = insertLine(lines, insertIdx, propLine)
+	lines = insertLine(lines, insertIdx, ":PROPERTIES:")
+	return lines, insertIdx + 3
+}
+
+func ensureLogbookEntry(lines []string, headingIdx int, entry string) ([]string, int) {
+	logbookStart := -1
+	logbookEnd := -1
+	searchStart := headingIdx + 1
+
+	for i := searchStart; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "*") {
+			break
+		}
+		if line == ":LOGBOOK:" {
+			logbookStart = i
+			continue
+		}
+		if logbookStart >= 0 && line == ":END:" {
+			logbookEnd = i
+			break
+		}
+	}
+
+	if logbookStart >= 0 && logbookEnd >= 0 {
+		lines = insertLine(lines, logbookStart+1, entry)
+		return lines, logbookEnd + 1
+	}
+
+	insertIdx := headingIdx + 1
+	for i := headingIdx + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "CLOSED:") || strings.HasPrefix(line, "SCHEDULED:") || strings.HasPrefix(line, "DEADLINE:") {
+			insertIdx = i + 1
+			continue
+		}
+		if line == ":PROPERTIES:" {
+			for j := i; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == ":END:" {
+					insertIdx = j + 1
+					break
+				}
+			}
+		}
+		break
+	}
+
+	lines = insertLine(lines, insertIdx, ":END:")
+	lines = insertLine(lines, insertIdx, entry)
+	lines = insertLine(lines, insertIdx, ":LOGBOOK:")
+	return lines, insertIdx + 3
+}
+
+func insertLine(lines []string, idx int, line string) []string {
+	if idx >= len(lines) {
+		return append(lines, line)
+	}
+	lines = append(lines[:idx+1], lines[idx:]...)
+	lines[idx] = line
+	return lines
 }
 
 func findHeadingLine(lines []string, h *ir.Heading) int {

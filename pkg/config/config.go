@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -12,6 +14,24 @@ type Config struct {
 	Version          int                  `yaml:"version"`
 	DefaultWorkspace string               `yaml:"default_workspace"`
 	Workspaces       map[string]Workspace `yaml:"workspaces"`
+	Timestamps       TimestampConfig      `yaml:"timestamps,omitempty"`
+	States           StatesConfig         `yaml:"states,omitempty"`
+	Capture          CaptureConfig        `yaml:"capture,omitempty"`
+}
+
+type TimestampConfig struct {
+	Timezone string `yaml:"timezone,omitempty"`
+}
+
+type StatesConfig struct {
+	Keywords   []string `yaml:"keywords,omitempty"`
+	DoneStates []string `yaml:"done_states,omitempty"`
+	AutoClose  bool     `yaml:"auto_close,omitempty"`
+}
+
+type CaptureConfig struct {
+	DefaultFile  string `yaml:"default_file,omitempty"`
+	DefaultState string `yaml:"default_state,omitempty"`
 }
 
 type Workspace struct {
@@ -28,6 +48,30 @@ func DefaultConfigPath() string {
 
 func Load() (*Config, error) {
 	return LoadFrom(DefaultConfigPath())
+}
+
+var configWarnOnce sync.Once
+
+func LoadOrDefault() *Config {
+	cfg, err := Load()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			configWarnOnce.Do(func() {
+				fmt.Fprintf(os.Stderr, "warning: config load error, using defaults: %v\n", err)
+			})
+		}
+		return &Config{
+			Version:    1,
+			Workspaces: make(map[string]Workspace),
+		}
+	}
+	if cfg == nil {
+		return &Config{
+			Version:    1,
+			Workspaces: make(map[string]Workspace),
+		}
+	}
+	return cfg
 }
 
 func LoadFrom(path string) (*Config, error) {
@@ -101,4 +145,61 @@ func (c *Config) SetDefault(name string) error {
 	}
 	c.DefaultWorkspace = name
 	return nil
+}
+
+var defaultDoneStates = []string{"DONE", "KILL", "CANCELLED"}
+
+func (c *Config) IsDoneState(state string) bool {
+	states := c.States.DoneStates
+	if len(states) == 0 {
+		states = defaultDoneStates
+	}
+	for _, s := range states {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) ShouldAutoClose() bool {
+	if len(c.States.DoneStates) == 0 && !c.States.AutoClose {
+		return true
+	}
+	return c.States.AutoClose
+}
+
+func (c *Config) GetCaptureFile() string {
+	if c.Capture.DefaultFile != "" {
+		return c.Capture.DefaultFile
+	}
+	return "INBOX.org"
+}
+
+func (c *Config) GetCaptureState() string {
+	if c.Capture.DefaultState != "" {
+		return c.Capture.DefaultState
+	}
+	return "IDEA"
+}
+
+func (c *Config) GetTimezone() *time.Location {
+	if c.Timestamps.Timezone != "" {
+		loc, err := time.LoadLocation(c.Timestamps.Timezone)
+		if err == nil {
+			return loc
+		}
+	}
+	return time.Local
+}
+
+var defaultStateKeywords = []string{
+	"IDEA", "TODO", "PROJ", "LOOP", "STRT", "WAIT", "HOLD", "DONE", "KILL", "CANCELLED", "NEXT",
+}
+
+func (c *Config) GetStateKeywords() []string {
+	if len(c.States.Keywords) > 0 {
+		return c.States.Keywords
+	}
+	return defaultStateKeywords
 }

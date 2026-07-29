@@ -386,3 +386,282 @@ func TestReplaceTodoInLine(t *testing.T) {
 		})
 	}
 }
+
+func TestSetCommand_StateLogging(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task
+:PROPERTIES:
+:ID: test-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:test-123", "--todo", "STRT", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), ":LOGBOOK:") {
+		t.Error("LOGBOOK drawer should be created")
+	}
+	if !strings.Contains(string(updated), "State \"STRT\"") {
+		t.Error("state change should be logged")
+	}
+	if !strings.Contains(string(updated), "from \"TODO\"") {
+		t.Error("old state should be in log")
+	}
+}
+
+func TestSetCommand_StateLogging_NoLog(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task
+:PROPERTIES:
+:ID: test-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:test-123", "--todo", "DONE", "--no-log", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if strings.Contains(string(updated), ":LOGBOOK:") {
+		t.Error("LOGBOOK should not be created with --no-log")
+	}
+}
+
+func TestSetCommand_Scheduled(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task
+:PROPERTIES:
+:ID: test-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:test-123", "--scheduled", "2026-01-15", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), "SCHEDULED:") {
+		t.Error("SCHEDULED should be added")
+	}
+	if !strings.Contains(string(updated), "2026-01-15") {
+		t.Error("date should be in SCHEDULED")
+	}
+}
+
+func TestSetCommand_Deadline(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task
+:PROPERTIES:
+:ID: test-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:test-123", "--deadline", "+3d", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), "DEADLINE:") {
+		t.Error("DEADLINE should be added")
+	}
+}
+
+func TestSetCommand_AutoClose(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task
+:PROPERTIES:
+:ID: test-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:test-123", "--todo", "DONE", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), "CLOSED:") {
+		t.Error("CLOSED should be auto-added for DONE state")
+	}
+}
+
+func TestSetCommand_Created(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* Heading
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::/Heading", "--created", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), ":CREATED:") {
+		t.Error("CREATED property should be added")
+	}
+	if !strings.Contains(string(updated), ":PROPERTIES:") {
+		t.Error("PROPERTIES drawer should be created")
+	}
+}
+
+func TestSetCommand_AutoClose_PreservesIDRef(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task
+:PROPERTIES:
+:ID: preserve-me-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:preserve-me-123", "--todo", "DONE", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("first set failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	if !strings.Contains(string(updated), "CLOSED:") {
+		t.Fatal("CLOSED should be added")
+	}
+
+	// Key test: After adding CLOSED, can we still resolve the ID ref?
+	ios2, _, stdout2, _ := iostreams.Test()
+	f2 := &cmdutil.Factory{IOStreams: ios2}
+
+	cmd2 := NewCmdSet(f2, nil)
+	cmd2.SetArgs([]string{path + "::ID:preserve-me-123", "--title", "Modified Task", "--yes"})
+	cmd2.SetOut(stdout2)
+
+	err = cmd2.Execute()
+	if err != nil {
+		t.Fatalf("second set by ID failed after CLOSED was added: %v", err)
+	}
+
+	final, _ := os.ReadFile(path)
+	if !strings.Contains(string(final), "Modified Task") {
+		t.Errorf("title should be changed, got: %s", string(final))
+	}
+}
+
+func TestSetCommand_TodoDonePreservesDeadline(t *testing.T) {
+	// When changing state to DONE, existing DEADLINE should be preserved
+	ios, _, stdout, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.org")
+	content := `* TODO Task with deadline
+SCHEDULED: <2026-01-15 Thu> DEADLINE: <2026-01-20 Tue>
+:PROPERTIES:
+:ID: deadline-test-123
+:END:
+Body.
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	cmd := NewCmdSet(f, nil)
+	cmd.SetArgs([]string{path + "::ID:deadline-test-123", "--todo", "DONE", "--yes"})
+	cmd.SetOut(stdout)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+
+	updated, _ := os.ReadFile(path)
+	updatedStr := string(updated)
+
+	// DONE state should be set
+	if !strings.Contains(updatedStr, "* DONE") {
+		t.Error("TODO should be changed to DONE")
+	}
+
+	// CLOSED should be added
+	if !strings.Contains(updatedStr, "CLOSED:") {
+		t.Error("CLOSED should be added for DONE state")
+	}
+
+	// DEADLINE must be preserved (this is the key test)
+	if !strings.Contains(updatedStr, "DEADLINE:") {
+		t.Errorf("DEADLINE should be preserved, got: %s", updatedStr)
+	}
+
+	// SCHEDULED should also be preserved
+	if !strings.Contains(updatedStr, "SCHEDULED:") {
+		t.Errorf("SCHEDULED should be preserved, got: %s", updatedStr)
+	}
+}
