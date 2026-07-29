@@ -7,7 +7,7 @@ check:
 	@echo "All checks passed"
 
 BINARY := orgx
-VERSION := 0.1.0-dev
+VERSION := 0.2.0-dev
 BUILD_DIR := bin
 INSTALL_DIR := $(HOME)/.local/bin
 

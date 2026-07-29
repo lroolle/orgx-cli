@@ -1,0 +1,36 @@
+# orgx
+
+> Org-mode and Markdown CLI for humans and AI agents, and a
+> Logseq-shaped vault (journals, pages, graph) built on plain org
+> files. Agents live in the graph: they journal with attribution,
+> link nodes by ID, and everything they write is text the human
+> reads in Emacs.
+
+Key facts:
+
+- Vault: a directory marked by `.orgx/`, discovered by walking up
+  like git. Layout: `journals/`, `pages/`, `whiteboards/`,
+  `assets/`, `pages/contents.org`, `pages/flashcards.org` (read
+  that page first). `orgx init` scaffolds it; an existing org-roam
+  directory already works unmodified.
+- Token-efficient document ops: `peek` (structure only), `get` (one
+  section by ref), `find` (refs, not content), `set` (surgical
+  edit). Stable refs are `path::ID:<uuid>`.
+- GTD: `capture`, `promote`, `log`; LOGBOOK state logging; org
+  timestamps with relative dates (`+1d`, `today`).
+- Vault ops: `node new/list`, `daily [text] --as <author>`,
+  `graph` (derived nodes/edges/broken links), `links`/`backlinks`.
+- Contract: every command takes `--json`; outputs are versioned
+  envelopes (`kind: orgx.<command>.v1`); errors are `orgx.error.v1`
+  on stderr with a runnable `fix`. Reads never write; writes need
+  `--yes` off-TTY.
+- `orgx skills install` writes the embedded SKILL.md where agent
+  runtimes look; a sync-guard test keeps skill and surface honest.
+
+Docs:
+
+- [README](README.md): install, quick start, agent contract
+- [SKILL.md](skills/orgx/SKILL.md): the agent operating manual
+- [ARCHITECTURE](docs/ARCHITECTURE.md): the four-layer frame and
+  the vault design (why graph is derived, why no database)
+- [schema](docs/schema.md): JSON kind registry and additive policy
