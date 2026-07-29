@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadSaveConfig(t *testing.T) {
@@ -181,5 +182,68 @@ workspaces:
 `
 	if string(data) != expected {
 		t.Errorf("YAML output:\n%s\nwant:\n%s", string(data), expected)
+	}
+}
+
+func TestGetTimezone(t *testing.T) {
+	cfg := &Config{}
+	loc := cfg.GetTimezone()
+	if loc != time.Local {
+		t.Errorf("expected time.Local when no timezone set, got %v", loc)
+	}
+
+	cfg.Timestamps.Timezone = "Asia/Singapore"
+	loc = cfg.GetTimezone()
+	if loc.String() != "Asia/Singapore" {
+		t.Errorf("expected Asia/Singapore, got %v", loc)
+	}
+
+	cfg.Timestamps.Timezone = "Invalid/Timezone"
+	loc = cfg.GetTimezone()
+	if loc != time.Local {
+		t.Errorf("expected time.Local for invalid timezone, got %v", loc)
+	}
+}
+
+func TestIsDoneState(t *testing.T) {
+	cfg := &Config{}
+
+	if !cfg.IsDoneState("DONE") {
+		t.Error("DONE should be a default done state")
+	}
+	if !cfg.IsDoneState("KILL") {
+		t.Error("KILL should be a default done state")
+	}
+	if cfg.IsDoneState("TODO") {
+		t.Error("TODO should not be a done state")
+	}
+
+	cfg.States.DoneStates = []string{"FINISHED", "CANCELLED"}
+	if cfg.IsDoneState("DONE") {
+		t.Error("DONE should not be done when custom states set")
+	}
+	if !cfg.IsDoneState("FINISHED") {
+		t.Error("FINISHED should be a done state")
+	}
+}
+
+func TestGetCaptureDefaults(t *testing.T) {
+	cfg := &Config{}
+
+	if cfg.GetCaptureFile() != "INBOX.org" {
+		t.Errorf("default capture file = %q, want INBOX.org", cfg.GetCaptureFile())
+	}
+	if cfg.GetCaptureState() != "IDEA" {
+		t.Errorf("default capture state = %q, want IDEA", cfg.GetCaptureState())
+	}
+
+	cfg.Capture.DefaultFile = "~/org/inbox.org"
+	cfg.Capture.DefaultState = "TODO"
+
+	if cfg.GetCaptureFile() != "~/org/inbox.org" {
+		t.Errorf("capture file = %q, want ~/org/inbox.org", cfg.GetCaptureFile())
+	}
+	if cfg.GetCaptureState() != "TODO" {
+		t.Errorf("capture state = %q, want TODO", cfg.GetCaptureState())
 	}
 }

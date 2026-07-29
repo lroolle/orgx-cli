@@ -50,10 +50,18 @@ type Heading struct {
 	Props     map[string]string `json:"props,omitempty"`
 	Scheduled string            `json:"scheduled,omitempty"`
 	Deadline  string            `json:"deadline,omitempty"`
+	Closed    string            `json:"closed,omitempty"`
+	Logbook   []StateChange     `json:"logbook,omitempty"`
 	Body      Body              `json:"body"`
 	Links     []*Link           `json:"links,omitempty"`
 	Children  []Node            `json:"children,omitempty"`
 	Span      Span              `json:"span"`
+}
+
+type StateChange struct {
+	NewState  string `json:"new_state"`
+	OldState  string `json:"old_state,omitempty"`
+	Timestamp string `json:"timestamp"`
 }
 
 func (h *Heading) NodeType() NodeType { return NodeTypeHeading }

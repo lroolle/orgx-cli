@@ -60,8 +60,8 @@ When =orgx set REF --todo NEWSTATE= changes state:
 :ID: abc123
 :END:
 :LOGBOOK:
-- State "STRT"       from "TODO"       [2026-01-08 Wed 14:30]
-- State "TODO"       from "IDEA"       [2026-01-07 Tue 09:15]
+- State "STRT"       from "TODO"       [2026-01-08 Thu 14:30]
+- State "TODO"       from "IDEA"       [2026-01-07 Wed 09:15]
 :END:
 #+END_SRC
 
@@ -76,15 +76,15 @@ New flags for =orgx set=:
 #+BEGIN_SRC text
 --scheduled DATE       Set SCHEDULED: <DATE>
 --deadline DATE        Set DEADLINE: <DATE>
---timestamp            Add inactive [DATE] to body
 --created              Set :CREATED: property
---closed               Set :CLOSED: (auto on DONE/KILL)
+--closed               Add CLOSED: [timestamp] (auto on DONE/KILL)
+--no-log               Skip LOGBOOK state logging
 #+END_SRC
 
 Date input formats:
 - ISO8601: =2026-01-08=, =2026-01-08T14:30=
 - Relative: =today=, =tomorrow=, =+1d=, =+2w=, =-3d=
-- Org format: =<2026-01-08 Wed>=
+- Org format: =<2026-01-08 Thu>=
 
 Auto-close: when state -> DONE or KILL, add =CLOSED: [timestamp]=
 
@@ -92,59 +92,64 @@ Auto-close: when state -> DONE or KILL, add =CLOSED: [timestamp]=
 
 New =orgx find= flags:
 #+BEGIN_SRC text
---todo STATE[,STATE...]     Filter by TODO state
---after DATE                Items modified after
---before DATE               Items modified before
+--todo STATE[,STATE...]     Filter by TODO state (comma-separated)
+--after DATE                Items with timestamps after date
+--before DATE               Items with timestamps before date
 --scheduled-after DATE      SCHEDULED after date
+--scheduled-before DATE     SCHEDULED before date
+--deadline-after DATE       DEADLINE after date
 --deadline-before DATE      DEADLINE before date
---state-changed-after DATE  Last state change after date
 #+END_SRC
 
 Examples:
 #+BEGIN_SRC bash
-orgx find --todo WAIT --in .                    # blocked tasks
-orgx find --deadline-before today --in BACKLOG  # overdue
-orgx find --todo STRT --state-changed-after -7d # recently started
+orgx find "" --todo WAIT --in .                  # blocked tasks
+orgx find "" --deadline-before today --in .      # overdue
+orgx find "" --scheduled-after -7d --in .        # scheduled this week
+orgx find "" --todo TODO,STRT --in ~/org/        # active items
 #+END_SRC
 
 ** F4: Capture Command
 
 #+BEGIN_SRC bash
-orgx capture TEXT --to FILE [--todo STATE] [--tags T1,T2] [--deadline DATE]
+orgx capture TEXT [--to FILE] [--todo STATE] [--tags T1,T2] [--scheduled DATE] [--deadline DATE]
 #+END_SRC
+
+If =--to= is omitted, uses =default_file= from config (default: =INBOX.org= in cwd).
 
 Creates new heading at EOF:
 #+BEGIN_SRC org
 * IDEA Review Gemini API docs
 :PROPERTIES:
-:CREATED: [2026-01-08 Wed 14:30]
+:ID: auto-generated-uuid
+:CREATED: [2026-01-08 Thu 14:30]
 :END:
 #+END_SRC
 
 ** F5: Promote/Refile Command
 
 #+BEGIN_SRC bash
-orgx promote REF --to FILE [--todo STATE]
+orgx promote REF --to FILE [--todo STATE] [--scheduled DATE] [--deadline DATE]
 #+END_SRC
 
 Moves heading between files with state transition logging:
 #+BEGIN_SRC bash
-orgx promote INBOX.org#12 --to BACKLOG.org --todo TODO
-# Moved: INBOX.org#12 -> BACKLOG.org#47
-# Logged: State "TODO" from "IDEA" [2026-01-08 Wed 14:30]
+orgx promote INBOX.org::ID:abc123 --to BACKLOG.org --todo TODO --yes
+# Moved: INBOX.org::ID:abc123 -> BACKLOG.org::ID:abc123
+# Logged: State "TODO" from "IDEA" [2026-01-08 Thu 14:30]
 #+END_SRC
 
 ** F6: Log/History View
 
 #+BEGIN_SRC bash
-orgx log REF [--format text|json]
+orgx log REF [--json] [--limit N]
 #+END_SRC
 
 Output:
 #+BEGIN_SRC text
-2026-01-08 Wed 14:30  STRT <- TODO
-2026-01-07 Tue 09:15  TODO <- IDEA
-2026-01-06 Mon 16:00  IDEA <- (created)
+2026-01-08 Thu 14:30  STRT <- TODO
+2026-01-07 Wed 09:15  TODO <- IDEA
+2026-01-06 Tue 16:00  IDEA <- (created)
 #+END_SRC
 
 * Decisions
@@ -166,52 +171,62 @@ Output:
 | Large LOGBOOK (100+ entries) | --limit flag on log command | Open |
 | State typos (STAT vs STRT) | Levenshtein suggest, require confirm | Open |
 
-* Implementation Phases
+* Implementation Status
 
-** Phase 1: Timestamp Support
-- Date parsing library (github.com/araddon/dateparse)
-- --scheduled, --deadline, --created flags
-- Timestamp fields in JSON output
+All features implemented in single iteration:
 
-** Phase 2: State Logging
-- LOGBOOK drawer parsing/writing
-- State change logging in set command
+** Timestamp Support [DONE]
+- pkg/orgtime: date parsing (ISO8601, relative, org format)
+- --scheduled, --deadline, --created, --closed flags on set
+- Timestamp fields in JSON output (Closed, Logbook in IR)
+
+** State Logging [DONE]
+- LOGBOOK drawer parsing (pkg/parser/org.go)
+- State change logging in set command (auto on --todo change)
 - --no-log escape hatch
-- log command
+- log command for history view
 
-** Phase 3: Queries
-- --todo, --after, --before flags on find
-- State/date filtering
-- LOGBOOK parsing for --state-changed-*
+** Queries [DONE]
+- --todo STATE,STATE (comma-separated) on find
+- --after, --before, --scheduled-after/before, --deadline-after/before
+- State/date filtering in matchesQuery
 
-** Phase 4: Workflow Commands
-- capture command
-- promote command
-- Config file support
-- Timezone handling
+** Workflow Commands [DONE]
+- capture command (creates heading with ID + CREATED)
+- promote command (moves heading, logs state change)
+- Config schema extended (StatesConfig, CaptureConfig)
+
+** Not Yet Implemented
+- Levenshtein state typo detection
+
+** Timezone Support [DONE]
+- Config: ~[timestamps] timezone = "Asia/Singapore"~
+- All date operations respect configured timezone
+- Falls back to system time.Local if not set or invalid
 
 * Example Workflow
 
 #+BEGIN_SRC bash
 # Capture idea
-orgx capture "Review Gemini API" --to INBOX.org
-# Created: INBOX.org#47
+orgx capture "Review Gemini API" --to INBOX.org --yes
+# Created: INBOX.org::ID:abc123
 
 # Promote to backlog with deadline
-orgx promote INBOX.org#47 --to BACKLOG.org --todo TODO --deadline +3d
+orgx promote INBOX.org::ID:abc123 --to BACKLOG.org --todo TODO --deadline +3d --yes
+# Moved: INBOX.org::ID:abc123 -> BACKLOG.org::ID:abc123
 # Logged: State "TODO" from "IDEA"
 
 # Start work
-orgx promote BACKLOG.org#12 --to devlog/260108.org --todo STRT
+orgx set BACKLOG.org::ID:abc123 --todo STRT --yes
 # Logged: State "STRT" from "TODO"
 
 # Check progress
-orgx log devlog/260108.org#3
+orgx log BACKLOG.org::ID:abc123
 # STRT <- TODO <- IDEA
 
 # Complete
-orgx set devlog/260108.org#3 --todo DONE
-# CLOSED: [2026-01-08 Wed 15:45]
+orgx set BACKLOG.org::ID:abc123 --todo DONE --yes
+# CLOSED: [2026-01-08 Thu 15:45]
 #+END_SRC
 
 * Config Schema
@@ -234,10 +249,12 @@ default_state = "IDEA"
 * Gotchas
 
 - LOGBOOK is a drawer (=:LOGBOOK:= at column 0), not a property
-- Day-of-week in timestamps: compute from date, ignore input
+- Day-of-week in timestamps: computed from date, not parsed from input
 - go-org uses 1-based line numbers, Go I/O uses 0-based
-- Relative dates anchor to midnight in user's timezone
+- Relative dates anchor to midnight in configured timezone (or system time.Local)
 - Windows CRLF: detect and preserve on write
+- Timezone: set ~[timestamps] timezone = "Asia/Singapore"~ in config, or uses system default
+- capture/promote only support .org files (no markdown)
 
 * Links
 

@@ -4,14 +4,17 @@ import (
 	"fmt"
 
 	"github.com/lroolle/orgx-cli/pkg/cmd/backlinks"
+	"github.com/lroolle/orgx-cli/pkg/cmd/capture"
 	"github.com/lroolle/orgx-cli/pkg/cmd/file"
 	"github.com/lroolle/orgx-cli/pkg/cmd/find"
 	"github.com/lroolle/orgx-cli/pkg/cmd/get"
 	"github.com/lroolle/orgx-cli/pkg/cmd/heading"
 	"github.com/lroolle/orgx-cli/pkg/cmd/id"
 	"github.com/lroolle/orgx-cli/pkg/cmd/links"
+	"github.com/lroolle/orgx-cli/pkg/cmd/log"
 	"github.com/lroolle/orgx-cli/pkg/cmd/ls"
 	"github.com/lroolle/orgx-cli/pkg/cmd/peek"
+	"github.com/lroolle/orgx-cli/pkg/cmd/promote"
 	"github.com/lroolle/orgx-cli/pkg/cmd/set"
 	"github.com/lroolle/orgx-cli/pkg/cmd/ws"
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
@@ -46,6 +49,12 @@ Use 'orgx <command> --help' for more information.`,
 		get.NewCmdGet(f, nil),
 		find.NewCmdFind(f, nil),
 		set.NewCmdSet(f, nil),
+	)
+
+	cmdutil.AddGroup(cmd, "GTD Workflow",
+		capture.NewCmdCapture(f, nil),
+		promote.NewCmdPromote(f, nil),
+		log.NewCmdLog(f, nil),
 	)
 
 	cmdutil.AddGroup(cmd, "Navigation",

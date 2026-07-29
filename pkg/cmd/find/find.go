@@ -5,10 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
+	"github.com/lroolle/orgx-cli/pkg/config"
 	"github.com/lroolle/orgx-cli/pkg/iostreams"
 	"github.com/lroolle/orgx-cli/pkg/ir"
+	"github.com/lroolle/orgx-cli/pkg/orgtime"
 	"github.com/lroolle/orgx-cli/pkg/parser"
 	"github.com/spf13/cobra"
 )
@@ -17,11 +20,24 @@ type FindOptions struct {
 	IO       *iostreams.IOStreams
 	Exporter cmdutil.Exporter
 
-	Query string
-	In    string
-	Todo  string
-	Tag   string
-	Limit int
+	Query           string
+	In              string
+	Todo            string
+	Tag             string
+	After           string
+	Before          string
+	ScheduledAfter  string
+	ScheduledBefore string
+	DeadlineAfter   string
+	DeadlineBefore  string
+	Limit           int
+
+	afterTime           time.Time
+	beforeTime          time.Time
+	scheduledAfterTime  time.Time
+	scheduledBeforeTime time.Time
+	deadlineAfterTime   time.Time
+	deadlineBeforeTime  time.Time
 }
 
 func NewCmdFind(f *cmdutil.Factory, runF func(*FindOptions) error) *cobra.Command {
@@ -35,9 +51,17 @@ func NewCmdFind(f *cmdutil.Factory, runF func(*FindOptions) error) *cobra.Comman
 		Long: `Search for headings matching criteria across files.
 Returns refs only, not content - pick which to expand with 'get'.
 
+Date formats for filters:
+  ISO8601:  2026-01-08, 2026-01-08T14:30
+  Relative: today, tomorrow, +1d, +2w, -3d, -7d
+  Org:      <2026-01-08 Thu>
+
 Examples:
   orgx find "project" --in ~/org/
   orgx find "" --todo TODO --in ~/org/
+  orgx find "" --todo WAIT --in .                    # blocked tasks
+  orgx find "" --deadline-before today --in .        # overdue
+  orgx find "" --scheduled-after -7d --in .          # scheduled this week
   orgx find "design" --tag work --in ~/org/*.org --json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -49,6 +73,10 @@ Examples:
 				opts.In = "."
 			}
 
+			if err := parseDateFilters(opts); err != nil {
+				return err
+			}
+
 			if runF != nil {
 				return runF(opts)
 			}
@@ -57,20 +85,79 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&opts.In, "in", "", "Directory or glob pattern to search")
-	cmd.Flags().StringVar(&opts.Todo, "todo", "", "Filter by TODO state")
+	cmd.Flags().StringVar(&opts.Todo, "todo", "", "Filter by TODO state (comma-separated for multiple)")
 	cmd.Flags().StringVar(&opts.Tag, "tag", "", "Filter by tag")
+	cmd.Flags().StringVar(&opts.After, "after", "", "Items with timestamps after date")
+	cmd.Flags().StringVar(&opts.Before, "before", "", "Items with timestamps before date")
+	cmd.Flags().StringVar(&opts.ScheduledAfter, "scheduled-after", "", "SCHEDULED after date")
+	cmd.Flags().StringVar(&opts.ScheduledBefore, "scheduled-before", "", "SCHEDULED before date")
+	cmd.Flags().StringVar(&opts.DeadlineAfter, "deadline-after", "", "DEADLINE after date")
+	cmd.Flags().StringVar(&opts.DeadlineBefore, "deadline-before", "", "DEADLINE before date")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 50, "Maximum results")
-	cmdutil.AddJSONFlags(cmd, &opts.Exporter, []string{"ref", "title", "todo", "tags"})
+	cmdutil.AddJSONFlags(cmd, &opts.Exporter, []string{"ref", "title", "todo", "tags", "scheduled", "deadline"})
 
 	return cmd
 }
 
+func parseDateFilters(opts *FindOptions) error {
+	cfg := config.LoadOrDefault()
+	now := time.Now().In(cfg.GetTimezone())
+	var err error
+
+	if opts.After != "" {
+		ts, err := orgtime.Parse(opts.After, now)
+		if err != nil {
+			return fmt.Errorf("invalid --after date: %w", err)
+		}
+		opts.afterTime = ts.Time
+	}
+	if opts.Before != "" {
+		ts, err := orgtime.Parse(opts.Before, now)
+		if err != nil {
+			return fmt.Errorf("invalid --before date: %w", err)
+		}
+		opts.beforeTime = ts.Time
+	}
+	if opts.ScheduledAfter != "" {
+		ts, err := orgtime.Parse(opts.ScheduledAfter, now)
+		if err != nil {
+			return fmt.Errorf("invalid --scheduled-after date: %w", err)
+		}
+		opts.scheduledAfterTime = ts.Time
+	}
+	if opts.ScheduledBefore != "" {
+		ts, err := orgtime.Parse(opts.ScheduledBefore, now)
+		if err != nil {
+			return fmt.Errorf("invalid --scheduled-before date: %w", err)
+		}
+		opts.scheduledBeforeTime = ts.Time
+	}
+	if opts.DeadlineAfter != "" {
+		ts, err := orgtime.Parse(opts.DeadlineAfter, now)
+		if err != nil {
+			return fmt.Errorf("invalid --deadline-after date: %w", err)
+		}
+		opts.deadlineAfterTime = ts.Time
+	}
+	if opts.DeadlineBefore != "" {
+		ts, err := orgtime.Parse(opts.DeadlineBefore, now)
+		if err != nil {
+			return fmt.Errorf("invalid --deadline-before date: %w", err)
+		}
+		opts.deadlineBeforeTime = ts.Time
+	}
+
+	return err
+}
+
 type FindResult struct {
-	Ref   string   `json:"ref"`
-	Title string   `json:"title"`
-	Todo  string   `json:"todo,omitempty"`
-	Tags  []string `json:"tags,omitempty"`
-	Path  string   `json:"path"`
+	Ref       string   `json:"ref"`
+	Title     string   `json:"title"`
+	Todo      string   `json:"todo,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Scheduled string   `json:"scheduled,omitempty"`
+	Deadline  string   `json:"deadline,omitempty"`
+	Path      string   `json:"path"`
 }
 
 func findRun(opts *FindOptions) error {
@@ -134,11 +221,13 @@ func searchHeadings(nodes []ir.Node, opts *FindOptions) []FindResult {
 		if h, ok := n.(*ir.Heading); ok {
 			if matchesQuery(h, opts) {
 				results = append(results, FindResult{
-					Ref:   h.Ref,
-					Title: h.Title,
-					Todo:  h.Todo,
-					Tags:  h.Tags,
-					Path:  extractPath(h.Ref),
+					Ref:       h.Ref,
+					Title:     h.Title,
+					Todo:      h.Todo,
+					Tags:      h.Tags,
+					Scheduled: h.Scheduled,
+					Deadline:  h.Deadline,
+					Path:      extractPath(h.Ref),
 				})
 			}
 
@@ -158,8 +247,18 @@ func matchesQuery(h *ir.Heading, opts *FindOptions) bool {
 		}
 	}
 
-	if opts.Todo != "" && h.Todo != opts.Todo {
-		return false
+	if opts.Todo != "" {
+		todos := strings.Split(opts.Todo, ",")
+		found := false
+		for _, t := range todos {
+			if strings.TrimSpace(t) == h.Todo {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 
 	if opts.Tag != "" {
@@ -171,6 +270,63 @@ func matchesQuery(h *ir.Heading, opts *FindOptions) bool {
 			}
 		}
 		if !found {
+			return false
+		}
+	}
+
+	cfg := config.LoadOrDefault()
+	now := time.Now().In(cfg.GetTimezone())
+
+	if !opts.scheduledAfterTime.IsZero() || !opts.scheduledBeforeTime.IsZero() {
+		if h.Scheduled == "" {
+			return false
+		}
+		schedTs, err := orgtime.Parse(h.Scheduled, now)
+		if err != nil {
+			return false
+		}
+		if !opts.scheduledAfterTime.IsZero() && !schedTs.Time.After(opts.scheduledAfterTime) {
+			return false
+		}
+		if !opts.scheduledBeforeTime.IsZero() && !schedTs.Time.Before(opts.scheduledBeforeTime) {
+			return false
+		}
+	}
+
+	if !opts.deadlineAfterTime.IsZero() || !opts.deadlineBeforeTime.IsZero() {
+		if h.Deadline == "" {
+			return false
+		}
+		deadTs, err := orgtime.Parse(h.Deadline, now)
+		if err != nil {
+			return false
+		}
+		if !opts.deadlineAfterTime.IsZero() && !deadTs.Time.After(opts.deadlineAfterTime) {
+			return false
+		}
+		if !opts.deadlineBeforeTime.IsZero() && !deadTs.Time.Before(opts.deadlineBeforeTime) {
+			return false
+		}
+	}
+
+	if !opts.afterTime.IsZero() || !opts.beforeTime.IsZero() {
+		hasMatch := false
+		for _, ts := range []string{h.Scheduled, h.Deadline} {
+			if ts == "" {
+				continue
+			}
+			parsed, err := orgtime.Parse(ts, now)
+			if err != nil {
+				continue
+			}
+			afterOK := opts.afterTime.IsZero() || parsed.Time.After(opts.afterTime)
+			beforeOK := opts.beforeTime.IsZero() || parsed.Time.Before(opts.beforeTime)
+			if afterOK && beforeOK {
+				hasMatch = true
+				break
+			}
+		}
+		if !hasMatch {
 			return false
 		}
 	}
