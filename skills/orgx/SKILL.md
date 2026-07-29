@@ -33,6 +33,7 @@ orgx
 ├── heading list/view/set
 ├── id ensure
 ├── ws add/list/show/use
+├── agent [task]         # Bridge: launch claude/codex in the vault
 └── skills list/install  # This skill, from the binary
 ```
 
@@ -224,6 +225,13 @@ orgx graph --json | jq '.broken'
 # Human preview (journals, pages, backlinks, graph view) — offer it
 # to the human, don't browse it yourself; the CLI is your interface
 orgx serve   # serves every workspace + the current vault, read-only
+
+# Hand the vault to another agent CLI with a vault-resident brief
+# (layout, flashcards, recent journals, house rules). You are
+# already an agent — you rarely need this; the human uses it to
+# start a session or script one.
+orgx agent "link this week's journals to their project pages"
+orgx agent --brief   # print the brief for any other harness
 
 # Read today / another day
 orgx daily

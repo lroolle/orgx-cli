@@ -45,6 +45,7 @@ stays data-only:
 | `orgx.node.list.v1` | root, count, skipped, nodes[] |
 | `orgx.daily.v1` | path, date, created, entry — or day content |
 | `orgx.graph.v1` | root, nodes[], edges[{from,to}], broken[] |
+| `orgx.agent.v1` | root, tool, author, brief (with `--brief --json`) |
 | `orgx.skills.list.v1` | embedded skills |
 | `orgx.skills.install.v1` | path, scope, updated |
 | `orgx.error.v1` | error.message, error.fix (stderr) |
