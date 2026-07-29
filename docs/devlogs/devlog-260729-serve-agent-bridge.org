@@ -1,0 +1,76 @@
+:PROPERTIES:
+:ID:       devlog:260729-serve-agent-bridge
+:END:
+#+TITLE: orgx serve + the L2 agent bridge (v0.3.0)
+#+DATE: [2026-07-29]
+#+FILETAGS: :devlog:serve:agent:roam:
+
+* Context
+
+The agent frame (docs/AGENT-FRAME.md, committed this morning) fixed
+the posture: orgx supplies hands and eyes to external heads, no
+embedded head until a trigger fires. This session shipped the two
+surfaces that frame calls for next: the human's reading surface
+(=orgx serve=, decision 4) and the head hand-off (=orgx agent=,
+decision 3C — pulled forward from "after the substrate" by the
+user's call).
+
+* Why
+
+- Humans in the loop had no door that wasn't Emacs. serve renders
+  journals/pages/backlinks/graph read-only, so review needs a
+  browser, not a toolchain.
+- Every agent session in a vault was starting cold. The bridge
+  primes the user's own claude/codex with a vault-resident brief —
+  standing context and house rules — instead of orgx growing a head
+  (no moat: every candidate task is one a generic head does well).
+
+* What
+
+- =pkg/cmd/serve= (PR #6): localhost read-only server, multi-vault
+  by default (all workspaces + discovered vault), journals feed
+  home, pages index, node view with backlinks + broken outgoing,
+  canvas force-graph (vanilla JS, offline), =graph.json= mirroring
+  the =orgx.graph.v1= envelope, method-qualified GET-only routes
+  (405 is structural), per-request derivation, port 6749 (spells
+  orgx on T9).
+- =pkg/roam.BuildGraph= refactor: graph derivation shared by CLI
+  and server.
+- Parser fidelity fix surfaced by serve tests: file-level preamble
+  links (how org-roam pages usually link) never reached the IR —
+  graph/links/backlinks were all blind to them. Preamble links now
+  ride as top-level =ir.Link= nodes; all three consumers read them.
+- =pkg/cmd/agentcmd= (PR #7): =orgx agent [task]= execs claude
+  (=--append-system-prompt=) or codex (brief in prompt) inside the
+  vault; =--brief= / =--brief --json= (=orgx.agent.v1=) for any
+  other harness; =--dry-run= shows the exact launch. Brief =
+  identity + graph shape + command crib + house rules + budgeted
+  tails (flashcards 1200 B, journals 1500 B, whole lines, file
+  heads stripped).
+
+* Decisions
+
+| Decision | Alternatives | Rationale |
+|----------+--------------+-----------|
+| serve is GET-only, structurally | auth'd write endpoints | reads-never-write holds where it's most tempting to bend; editing belongs to editors/agents, review to git |
+| derive per request, no cache | in-memory graph cache | the page is always the truth on disk; vault sizes make it cheap (ARCHITECTURE.md doctrine) |
+| hand-rolled canvas force sim | d3/CDN, vendored lib | offline, zero deps, ~150 lines; Logseq/Obsidian interaction pattern without their stack |
+| bridge, not embedded agent | agentkit adapter now | AGENT-FRAME decision 3: no moat, adapter mass ≈ 3k lines; trigger conditions written down |
+| brief tails byte-budgeted, heads stripped | inject whole files | ihme's context-leak scar: unbounded injection taxes every future session; drawers are identity, not prompt content |
+| preamble links fixed in parser | special-case in roam | links/backlinks/graph share the blindness; ir.Link top-level nodes existed for exactly this |
+
+* Risks
+
+| Risk | Mitigation | Status |
+|------+------------+--------|
+| claude/codex CLI flags drift (=--append-system-prompt=, =codex exec=) | invocation() isolated + tested; =--brief= escape hatch works with any harness | open, low |
+| serve on big vaults (per-request full parse on node/graph pages) | doctrine accepts it; org-id-locations-style derived cache is the known future fix | open |
+| =file parse --json= now emits top-level link nodes | additive within v1; consumers dispatch on =type= | accepted |
+
+* WIP / Next
+
+- Contract repairs remain first in DEVLOG roadmap (set --json, env
+  overrides, error codes, dead ws config fields).
+- Residency substrate: heading-level nodes, agent homes, =orgx
+  context= (the brief's assembly, exposed for any caller).
+- Cross-workspace ID resolution (AGENT-FRAME decision 2).
