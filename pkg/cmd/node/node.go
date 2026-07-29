@@ -80,7 +80,9 @@ Examples:
 			if err != nil {
 				return err
 			}
-			opts.Root = root
+			// New pages land in the layout's pages directory; the
+			// scan stays vault-wide, so where old nodes live is fine.
+			opts.Root = roam.LoadLayout(root).PagesDir(root)
 			if runF != nil {
 				return runF(opts)
 			}

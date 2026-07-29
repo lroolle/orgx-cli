@@ -118,8 +118,18 @@ func TestDailiesDirDefaultsAndConfig(t *testing.T) {
 	if got := DailiesDir(cfg, "", "/ws"); got != filepath.Join("/ws", "journal") {
 		t.Fatalf("configured dailies = %q", got)
 	}
+	// No workspace config: the vault layout decides — journals by
+	// default, org-roam's daily/ when that convention is present.
 	plain := &config.Config{Version: 1, Workspaces: map[string]config.Workspace{}}
-	if got := DailiesDir(plain, "", "/ws"); got != filepath.Join("/ws", "daily") {
+	fresh := t.TempDir()
+	if got := DailiesDir(plain, "", fresh); got != filepath.Join(fresh, "journals") {
 		t.Fatalf("default dailies = %q", got)
+	}
+	orgroam := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(orgroam, "daily"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got := DailiesDir(plain, "", orgroam); got != filepath.Join(orgroam, "daily") {
+		t.Fatalf("org-roam dailies = %q", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/cmd/file"
 	"github.com/lroolle/orgx-cli/pkg/cmd/find"
 	"github.com/lroolle/orgx-cli/pkg/cmd/get"
+	"github.com/lroolle/orgx-cli/pkg/cmd/graph"
 	"github.com/lroolle/orgx-cli/pkg/cmd/heading"
 	"github.com/lroolle/orgx-cli/pkg/cmd/id"
 	"github.com/lroolle/orgx-cli/pkg/cmd/links"
@@ -19,6 +20,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/cmd/promote"
 	"github.com/lroolle/orgx-cli/pkg/cmd/set"
 	"github.com/lroolle/orgx-cli/pkg/cmd/skillscmd"
+	"github.com/lroolle/orgx-cli/pkg/cmd/vaultinit"
 	"github.com/lroolle/orgx-cli/pkg/cmd/ws"
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -60,9 +62,11 @@ Use 'orgx <command> --help' for more information.`,
 		log.NewCmdLog(f, nil),
 	)
 
-	cmdutil.AddGroup(cmd, "Roam",
+	cmdutil.AddGroup(cmd, "Vault",
+		vaultinit.NewCmdInit(f, nil),
 		node.NewCmdNode(f),
 		daily.NewCmdDaily(f, nil),
+		graph.NewCmdGraph(f, nil),
 	)
 
 	cmdutil.AddGroup(cmd, "Navigation",

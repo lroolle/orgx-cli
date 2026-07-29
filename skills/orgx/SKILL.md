@@ -23,8 +23,10 @@ orgx
 ├── capture <text>       # Create new heading (GTD inbox)
 ├── promote <ref>        # Move heading between files
 ├── log <ref>            # Show state change history
-├── node new/list        # Roam nodes (org-roam-compatible files)
-├── daily [text]         # Day journal; --as <agent> attributes entries
+├── init [dir]           # Scaffold a vault (journals/pages/whiteboards/assets)
+├── node new/list        # Pages: org-roam-compatible file nodes
+├── daily [text]         # Journals; --as <agent> attributes entries
+├── graph                # Derive nodes+edges+broken links (JSON)
 ├── ls / links / backlinks
 ├── file parse/outline
 ├── heading list/view/set
@@ -165,15 +167,34 @@ orgx log notes.org::ID:abc123 --json
 orgx log notes.org::ID:abc123 --limit 5
 ```
 
-## Roam Workflow
+## Vault Workflow
 
-The workspace root is the knowledge graph. Set it once:
+A vault is the knowledge graph on disk, Logseq-shaped:
 
-```bash
-orgx ws add main --root ~/org/roam && orgx ws use main
+```
+vault/
+  .orgx/        marker + config — inside the tree, every orgx
+                command finds the vault by walking up (like git)
+  journals/     one org file per day (orgx daily)
+  pages/        topic nodes (orgx node new)
+  whiteboards/  reserved (no tooling yet)
+  assets/       images, attachments
+  pages/contents.org    the front door
+  pages/flashcards.org  read this page FIRST every session —
+                        durable facts and preferences live here
 ```
 
-Then node/daily/find/backlinks need no directory flags:
+Create one (idempotent — safe inside an existing org-roam dir,
+which is already a valid vault; its daily/ convention is detected):
+
+```bash
+orgx init ~/org/vault
+cd ~/org/vault    # from here, no --root/--in/-w flags needed
+```
+
+Or point a workspace at one: `orgx ws add main --root ~/org/vault
+&& orgx ws use main`. Then node/daily/find/backlinks/graph need no
+directory flags:
 
 ```bash
 # Create a node (org-roam-compatible: :ID: drawer + #+title)
@@ -195,12 +216,17 @@ orgx find "" --tag @claude --json
 # What references this node?
 orgx backlinks <node-id> --json
 
+# The whole graph: nodes, edges, broken links
+orgx graph --json | jq '.broken'
+
 # Read today / another day
 orgx daily
 orgx daily --date -1d
 ```
 
-Rules for agents working in a roam:
+Rules for agents working in a vault:
+- Read `pages/flashcards.org` first (orgx get/peek) — it is the
+  always-loaded context; add durable facts there sparingly.
 - Journal completed work with `orgx daily ... --as <your-name> --yes` —
   the daily is shared with the human; write facts, not chatter.
 - Link nodes by `[[id:...]]` (get IDs from node list / peek), never
