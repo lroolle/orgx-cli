@@ -86,6 +86,20 @@ in, each page derived from the files at request time. There are no
 write endpoints: editing belongs to Emacs and agents, review
 belongs to git.
 
+## Bring your agent
+
+```bash
+orgx agent "link this week's journals to their project pages"
+```
+
+orgx doesn't ship a model — it hands the vault to the agent CLI
+you already have (claude or codex), primed with a vault-resident
+brief: the layout, the graph's current shape, your flashcards,
+recent journals, and the house rules (link by id, journal your
+work, verify after freehand edits). No task opens an interactive
+session in the vault; `orgx agent --brief` prints the brief for
+any other harness to compose.
+
 ## Documents, precisely
 
 The original orgx core: work on structured text without paying for

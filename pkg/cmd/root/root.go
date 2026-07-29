@@ -3,6 +3,7 @@ package root
 import (
 	"fmt"
 
+	"github.com/lroolle/orgx-cli/pkg/cmd/agentcmd"
 	"github.com/lroolle/orgx-cli/pkg/cmd/backlinks"
 	"github.com/lroolle/orgx-cli/pkg/cmd/capture"
 	"github.com/lroolle/orgx-cli/pkg/cmd/daily"
@@ -94,6 +95,7 @@ Use 'orgx <command> --help' for more information.`,
 	)
 
 	cmdutil.AddGroup(cmd, "Agent integration",
+		agentcmd.NewCmdAgent(f, nil),
 		skillscmd.NewCmdSkills(f),
 	)
 
