@@ -40,6 +40,21 @@ func (p *OrgParser) Parse(path string, content []byte) (*ir.Document, error) {
 		irDoc.Meta.Title = title
 	}
 
+	// File-level body links (before the first heading) are links
+	// too — an org-roam page usually links from its preamble. They
+	// ride as top-level ir.Link nodes so graph/links/backlinks see
+	// them; heading links stay on their headings.
+	var preamble []org.Node
+	for _, node := range doc.Nodes {
+		if _, ok := node.(org.Headline); ok {
+			break
+		}
+		preamble = append(preamble, node)
+	}
+	for _, l := range extractOrgLinks(preamble) {
+		irDoc.Nodes = append(irDoc.Nodes, l)
+	}
+
 	lines := strings.Split(string(content), "\n")
 	headings := extractOrgHeadings(path, doc.Nodes, lines, stateKeywords)
 	for _, h := range headings {

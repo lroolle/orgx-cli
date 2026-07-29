@@ -1,0 +1,184 @@
+/* orgx serve — one stylesheet, no build step. System fonts, muted
+   palette, dark mode by preference. The content is the interface. */
+
+:root {
+  --bg: #fcfcfb;
+  --fg: #24292e;
+  --dim: #6a737d;
+  --line: #e4e4e0;
+  --accent: #3b6ea5;
+  --accent-soft: #eef3f8;
+  --warn: #b3541e;
+  --done: #4a7c59;
+  --code-bg: #f4f4f2;
+  --graph-node: #3b6ea5;
+  --graph-journal: #b0b8bf;
+  --graph-edge: rgba(110, 120, 130, 0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #d3d7dc;
+    --dim: #7d8590;
+    --line: #2b2f36;
+    --accent: #7aa2d4;
+    --accent-soft: #1c2530;
+    --warn: #d98d5c;
+    --done: #7fb08c;
+    --code-bg: #1c1f26;
+    --graph-node: #7aa2d4;
+    --graph-journal: #4a5058;
+    --graph-edge: rgba(140, 150, 160, 0.25);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+header {
+  border-bottom: 1px solid var(--line);
+}
+
+nav {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 0.7rem 1.25rem;
+  display: flex;
+  gap: 1.1rem;
+  align-items: baseline;
+}
+
+nav a { color: var(--dim); text-decoration: none; }
+nav a:hover { color: var(--accent); }
+nav .vault-name { color: var(--fg); font-weight: 600; }
+nav .switch { margin-left: auto; }
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+footer {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+  color: var(--dim);
+  font-size: 0.8rem;
+  border-top: 1px solid var(--line);
+}
+
+h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
+h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; }
+a { color: var(--accent); }
+
+/* --- indexes ------------------------------------------------- */
+
+table.index { width: 100%; border-collapse: collapse; }
+table.index th {
+  text-align: left; font-weight: 500; color: var(--dim);
+  font-size: 0.8rem; padding: 0.3rem 0.75rem 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+}
+table.index td {
+  padding: 0.35rem 0.75rem 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: baseline;
+}
+table.index a { text-decoration: none; }
+
+.pill {
+  display: inline-block; padding: 0 0.45em; margin-right: 0.3em;
+  border: 1px solid var(--line); border-radius: 1em;
+  font-size: 0.75rem; color: var(--dim);
+}
+
+.dim { color: var(--dim); font-size: 0.85em; }
+.empty { color: var(--dim); }
+.hint code { color: var(--fg); }
+.warn { color: var(--warn); }
+.warn-text { color: var(--warn); }
+
+.pins { display: flex; gap: 0.9rem; }
+.pins a {
+  text-decoration: none; padding: 0.15rem 0.6rem;
+  background: var(--accent-soft); border-radius: 0.35rem;
+}
+
+ul.days { list-style: none; padding: 0; columns: 3; }
+ul.days a { text-decoration: none; }
+
+/* --- journals feed & node pages ------------------------------ */
+
+article.day { margin-bottom: 2rem; }
+article.day > h1 { border-bottom: 1px solid var(--line); padding-bottom: 0.3rem; }
+article.day > h1 a { color: var(--fg); text-decoration: none; }
+article.day > h1 a:hover { color: var(--accent); }
+
+article.node .meta, .meta {
+  display: flex; gap: 0.75rem; align-items: baseline;
+  color: var(--dim); margin: -0.4rem 0 1rem;
+}
+.meta .toggle { margin-left: auto; font-size: 0.85rem; }
+
+aside.backlinks, aside.broken {
+  margin-top: 2.5rem; padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+aside h2 { color: var(--dim); font-size: 0.85rem; margin-top: 0.5rem; }
+aside ul { padding-left: 1.2rem; }
+aside.broken li { color: var(--warn); }
+
+/* --- rendered org -------------------------------------------- */
+
+.org h2, .org h3, .org h4, .org h5 { margin: 1.1rem 0 0.3rem; }
+.org h2 { font-size: 1.1rem; }
+.org h3 { font-size: 1rem; }
+.org h4, .org h5 { font-size: 0.95rem; }
+
+.org .todo { font-size: 0.8em; font-weight: 600; margin-right: 0.4em; color: var(--warn); }
+.org .todo.status-done { color: var(--done); }
+.org .priority { font-size: 0.8em; color: var(--dim); margin-right: 0.4em; }
+.org .tags { font-size: 0.75em; font-weight: 400; color: var(--dim); }
+.org .timestamp { color: var(--dim); font-size: 0.9em; }
+
+.org code, code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25em;
+}
+.org pre {
+  background: var(--code-bg); padding: 0.75rem 1rem;
+  border-radius: 0.4rem; overflow-x: auto; line-height: 1.45;
+}
+.org pre code { background: none; padding: 0; }
+
+.org table { border-collapse: collapse; margin: 0.75rem 0; }
+.org th, .org td { border: 1px solid var(--line); padding: 0.25rem 0.6rem; }
+
+.org blockquote {
+  margin: 0.75rem 0; padding: 0.1rem 1rem;
+  border-left: 3px solid var(--line); color: var(--dim);
+}
+
+.org img { max-width: 100%; }
+.org ul, .org ol { padding-left: 1.4rem; }
+
+/* --- graph --------------------------------------------------- */
+
+canvas#graph {
+  width: 100%; height: 30rem;
+  border: 1px solid var(--line); border-radius: 0.4rem;
+  cursor: default;
+}

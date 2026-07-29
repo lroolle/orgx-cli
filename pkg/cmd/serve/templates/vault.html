@@ -1,0 +1,18 @@
+{{template "head" .}}
+{{if .Pins}}
+<p class="pins">
+{{range .Pins}}<a href="/v/{{esc $.Vault.Name}}/node/{{esc .ID}}">{{.Title}}</a>{{end}}
+</p>
+{{end}}
+{{range .Days}}
+<article class="day">
+{{if .ID}}<h1><a href="/v/{{esc $.Vault.Name}}/node/{{esc .ID}}">{{.Date}}</a></h1>{{else}}<h1>{{.Date}}</h1>{{end}}
+{{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
+<div class="org">{{.HTML}}</div>
+</article>
+{{end}}
+{{if not .Days}}
+<p class="empty">No journals yet.</p>
+<p class="hint"><code>orgx daily "what happened" --yes</code></p>
+{{end}}
+{{template "foot" .}}

@@ -73,6 +73,19 @@ orgx graph --json              # nodes, edges, and BROKEN links
 orgx find "" --tag @claude     # everything the agent did, dated
 ```
 
+## See it
+
+```bash
+orgx serve        # http://127.0.0.1:6749 — 6749 spells orgx
+```
+
+A read-only web preview for the humans in the loop: the journals
+feed, pages with backlinks, rendered org, broken links, and the
+graph — every configured workspace plus the vault you're standing
+in, each page derived from the files at request time. There are no
+write endpoints: editing belongs to Emacs and agents, review
+belongs to git.
+
 ## Documents, precisely
 
 The original orgx core: work on structured text without paying for

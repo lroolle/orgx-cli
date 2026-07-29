@@ -1,0 +1,21 @@
+{{template "head" .}}
+<h1>graph</h1>
+<p class="meta">
+<span>{{len .Graph.Nodes}} nodes</span>
+<span>{{len .Graph.Edges}} links</span>
+{{if .Graph.Broken}}<span class="warn-text">{{len .Graph.Broken}} broken</span>{{end}}
+<label class="toggle"><input type="checkbox" id="show-journals" checked> journals</label>
+</p>
+<canvas id="graph" data-vault="{{.Vault.Name}}"></canvas>
+{{if .Graph.Broken}}
+<aside class="broken">
+<h2>broken links</h2>
+<ul>
+{{range .Graph.Broken}}
+<li><a href="/v/{{esc $.Vault.Name}}/node/{{esc .From}}">{{.From}}</a> → <code>[[id:{{.Target}}]]</code></li>
+{{end}}
+</ul>
+</aside>
+{{end}}
+<script src="/static/graph.js"></script>
+{{template "foot" .}}

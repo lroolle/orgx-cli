@@ -1,0 +1,15 @@
+{{template "head" .}}
+<h1>vaults</h1>
+<table class="index">
+<thead><tr><th>vault</th><th>nodes</th><th class="dim">root</th></tr></thead>
+<tbody>
+{{range .Rows}}
+<tr>
+<td><a href="/v/{{esc .Name}}/">{{.Name}}</a></td>
+<td>{{.Nodes}}</td>
+<td class="dim">{{.Root}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{template "foot" .}}
