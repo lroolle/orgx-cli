@@ -1,0 +1,80 @@
+:PROPERTIES:
+:ID: devlog:260729-roam-layer
+:END:
+#+TITLE: Roam Layer & Agentic-Native Contract
+#+DATE: [2026-07-29]
+#+FILETAGS: :devlog:roam:agent:contract:
+
+* Context
+
+Direction: rebuild orgx as our own roam — org-roam's workflow
+(nodes, dailies, backlinks) on the orgx substrate, agentic-native
+per the practices distilled from ihme-cli (workspace
+docs/agentic-cli-practices.md), with agents living in the graph.
+
+Session also landed the uncommitted 2026-01-08 GTD work
+([[file:devlog-260108-state-timestamps-spec.org][spec]]) and created the
+GitHub repo (lroolle/orgx-cli, private) — first push, first PRs,
+first CI.
+
+* What
+
+Three PRs, all squash-merged:
+
+1. PR #1 =292f7b4= — the staged GTD state-flow session, as-is.
+2. PR #2 =100b118= — roam layer:
+   - =pkg/roam=: head-only metadata scan (ID drawer, #+title,
+     #+filetags), root resolution with fix-bearing errors
+   - =orgx node new/list=: org-roam-compatible file nodes
+     (YYYYMMDDHHMMSS-slug.org); non-nodes counted as skipped
+   - =orgx daily [text] --as <author>=: per-day node, timestamped
+     entries, author as =@name= entry tag
+   - find/backlinks default =--in= to the workspace; find recurses
+     into directories (globs stay flat)
+   - parser: headline-title links extract (journal entries ARE
+     headings; their links must backlink)
+3. PR #3 =77dd418= — agentic contract:
+   - JSON envelope =kind: orgx.<command path>.v1= auto-derived;
+     arrays -> {kind, count, items}; nil -> empty
+   - =orgx.error.v1= on stderr under --json with runnable
+     =error.fix= (cmdutil.WithFix)
+   - skill embedded (go:embed) + =orgx skills list/install= +
+     sync-guard test in pkg/cmd/root
+   - CI (vet/test/build), =make check=
+
+* Decisions
+
+| Decision | Alternatives | Rationale |
+|----------+--------------+-----------|
+| Author = =@name= entry tag (+ :ORGX_AUTHOR: on nodes) | property only; separate agent files | queryable with existing find --tag; agents share the human's files |
+| Head-only scan in pkg/roam | full parse per file | node list over ~1k files stays ms-cheap |
+| Workspace root IS the graph | new [roam] config section | ws add/use already existed; RoamDB field was already sketched |
+| kind auto-derived from command path | per-command constants | zero drift, zero per-command edits |
+| Envelope now (breaking) | keep bare arrays | pre-1.0 + private; versioned kinds prevent silent breaks later |
+| find recurses on directories | keep flat glob | dailies invisible one level down read as "no matches" |
+
+* Risks
+
+| Risk | Mitigation | Status |
+|------+------------+--------|
+| Envelope broke old JSON consumers | none exist beyond our tests (updated) | Closed |
+| Title-link extraction order vs go-org internals | regression test pinning 2 links | Open, low |
+| Sync-guard only checks top-level command names | deepen when surface stabilizes | Open |
+| Repo is private; no release automation | goreleaser + v0.2.0 when owner wants it public | Open |
+
+* WIP / Next
+
+- Heading-level nodes (org-roam counts headings with :ID: as nodes;
+  node list is file-level only)
+- =orgx graph= (nodes+edges JSON) for visualization/agent traversal
+- docs/schema.md declaring the kinds (ccx pattern)
+- Agent homes: a node per agent accumulating its long-term notes —
+  then an embedded agent (agentkit) once the substrate earns it
+- Release: goreleaser, v0.2.0 tag, public when owner decides
+
+* Verification
+
+All local: full test suite + vet green (make check), built-binary
+smoke of ws add -> node new -> daily --as claude -> find --tag
+@claude (no --in) -> backlinks via title link -> error envelope ->
+skills install. CI green on main.
