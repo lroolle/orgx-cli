@@ -15,9 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
 	"github.com/lroolle/orgx-cli/pkg/config"
 )
+
+// NewID mints a node ID (org :ID: property value).
+func NewID() string { return uuid.New().String() }
 
 // NodeMeta is the file-level identity of one roam node.
 type NodeMeta struct {
@@ -29,28 +33,45 @@ type NodeMeta struct {
 	MTime  string   `json:"mtime"`
 }
 
-// ResolveRoot picks the roam root: --root override, then the named
-// (or default) workspace. The error states the fix.
+// ResolveRoot picks the roam root: --root override, then the vault
+// the current directory sits in (the .orgx marker, found the way
+// git finds its repo), then the named (or default) workspace. The
+// error states the fix.
 func ResolveRoot(cfg *config.Config, wsName, rootOverride string) (string, error) {
 	if rootOverride != "" {
 		return ExpandPath(rootOverride), nil
 	}
+	// An explicitly named workspace outranks discovery — the user
+	// said which graph they meant, and a typo must error, not fall
+	// back to whatever vault the shell happens to sit in.
+	if wsName != "" {
+		ws, err := cfg.GetWorkspace(wsName)
+		if err != nil {
+			return "", cmdutil.WithFix(err, "orgx ws list shows configured workspaces")
+		}
+		return ExpandPath(ws.Root), nil
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if root, ok := FindVault(cwd); ok {
+			return root, nil
+		}
+	}
 	ws, err := cfg.GetWorkspace(wsName)
 	if err != nil {
 		return "", cmdutil.WithFix(fmt.Errorf("no roam root: %w", err),
-			"orgx ws add main --root ~/org/roam && orgx ws use main (or pass --root)")
+			"orgx init (in your vault), or orgx ws add main --root ~/org/roam && orgx ws use main, or pass --root")
 	}
 	return ExpandPath(ws.Root), nil
 }
 
-// DailiesDir returns the dailies directory under root for the named
-// (or default) workspace; the subdirectory defaults to "daily".
+// DailiesDir returns the journals directory under root: explicit
+// workspace config wins, then the vault layout (which detects an
+// org-roam daily/ convention).
 func DailiesDir(cfg *config.Config, wsName, root string) string {
-	sub := "daily"
 	if ws, err := cfg.GetWorkspace(wsName); err == nil && ws.Dailies != "" {
-		sub = ws.Dailies
+		return filepath.Join(root, ws.Dailies)
 	}
-	return filepath.Join(root, sub)
+	return LoadLayout(root).JournalsDir(root)
 }
 
 // ExpandPath resolves ~/ and makes relative paths absolute.
