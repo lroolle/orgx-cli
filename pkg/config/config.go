@@ -39,6 +39,9 @@ type Workspace struct {
 	RoamDB string `yaml:"roam_db,omitempty"`
 	Inbox  string `yaml:"inbox,omitempty"`
 	Format string `yaml:"format,omitempty"`
+	// Dailies is the journal subdirectory under Root ("daily" when
+	// empty, matching org-roam-dailies).
+	Dailies string `yaml:"dailies,omitempty"`
 }
 
 func DefaultConfigPath() string {

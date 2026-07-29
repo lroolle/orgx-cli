@@ -443,3 +443,27 @@ Also mentions SCHEDULED: <2026-01-15 Thu> and CLOSED: [2026-01-10 Sat] in prose.
 		t.Errorf("Closed = %q, want empty (CLOSED in body should not match)", h.Closed)
 	}
 }
+
+func TestHeadlineTitleLinksAreExtracted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daily.org")
+	content := "* 14:30 worked on [[id:abc-123][SRP notes]]  :@claude:\nBody mentions [[id:def-456][other]].\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, ok := doc.Nodes[0].(*ir.Heading)
+	if !ok {
+		t.Fatalf("node = %T", doc.Nodes[0])
+	}
+	if len(h.Links) != 2 {
+		t.Fatalf("want title+body links, got %d: %+v", len(h.Links), h.Links)
+	}
+	// Title link first — it is the entry's primary reference.
+	if h.Links[0].Target != "id:abc-123" && h.Links[0].Target != "abc-123" {
+		t.Fatalf("title link = %+v", h.Links[0])
+	}
+}
