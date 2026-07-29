@@ -1,4 +1,10 @@
-.PHONY: build install clean test lint fmt deps
+.PHONY: build install clean test lint fmt deps check
+
+check:
+	go vet ./...
+	go test ./...
+	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/orgx
+	@echo "All checks passed"
 
 BINARY := orgx
 VERSION := 0.1.0-dev

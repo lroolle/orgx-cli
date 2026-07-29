@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lroolle/orgx-cli/pkg/cmdutil"
 	"github.com/lroolle/orgx-cli/pkg/config"
 )
 
@@ -36,8 +37,8 @@ func ResolveRoot(cfg *config.Config, wsName, rootOverride string) (string, error
 	}
 	ws, err := cfg.GetWorkspace(wsName)
 	if err != nil {
-		return "", fmt.Errorf(
-			"no roam root: %w — run 'orgx ws add main --root ~/org/roam' then 'orgx ws use main', or pass --root", err)
+		return "", cmdutil.WithFix(fmt.Errorf("no roam root: %w", err),
+			"orgx ws add main --root ~/org/roam && orgx ws use main (or pass --root)")
 	}
 	return ExpandPath(ws.Root), nil
 }

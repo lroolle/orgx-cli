@@ -1,28 +1,36 @@
 ---
 name: orgx
 description: >
-  Context-efficient CLI for LLMs to work with Org and Markdown files.
-  Minimizes token usage by providing structure-only views, precise section
-  retrieval, and surgical edits. Supports GTD workflow with state logging,
-  timestamps, and capture/promote operations.
+  Context-efficient CLI for LLMs to work with Org and Markdown files,
+  and the roam layer over them: nodes, dailies, links, backlinks.
+  Minimizes token usage with structure-only views, precise section
+  retrieval, and surgical edits. Supports GTD workflow with state
+  logging, timestamps, and capture/promote operations. Agents journal
+  their own work into the graph with 'orgx daily --as <name>'.
 ---
 
 # ORGX CLI
 
-**Token-efficient interface for structured documents.**
+**Token-efficient interface for structured documents — and the roam
+they form.**
 
 ```
 orgx
 ├── peek <path>          # Structure only (low tokens)
 ├── get <ref>            # Get specific section
-├── find <query>         # Search across files (refs only)
+├── find <query>         # Search headings (recurses; defaults to workspace)
 ├── set <ref>            # Surgical edit with state logging
-├── capture <text>       # Create new heading
+├── capture <text>       # Create new heading (GTD inbox)
 ├── promote <ref>        # Move heading between files
 ├── log <ref>            # Show state change history
+├── node new/list        # Roam nodes (org-roam-compatible files)
+├── daily [text]         # Day journal; --as <agent> attributes entries
+├── ls / links / backlinks
 ├── file parse/outline
 ├── heading list/view/set
-└── ws add/list/show/use
+├── id ensure
+├── ws add/list/show/use
+└── skills list/install  # This skill, from the binary
 ```
 
 ## Core Workflow
@@ -156,6 +164,57 @@ orgx log notes.org::ID:abc123
 orgx log notes.org::ID:abc123 --json
 orgx log notes.org::ID:abc123 --limit 5
 ```
+
+## Roam Workflow
+
+The workspace root is the knowledge graph. Set it once:
+
+```bash
+orgx ws add main --root ~/org/roam && orgx ws use main
+```
+
+Then node/daily/find/backlinks need no directory flags:
+
+```bash
+# Create a node (org-roam-compatible: :ID: drawer + #+title)
+orgx node new "SRP protocol notes" --tags auth --yes --json
+
+# List nodes; files without :ID: are reported as skipped
+orgx node list --json
+orgx node list --tag auth --search srp
+
+# Journal YOUR work as you finish it — always pass --as with your name
+orgx daily "reserved 3 aliases for signup flows" --as claude --yes
+
+# Link to nodes inside entries; title links backlink like body links
+orgx daily "refactored [[id:<node-id>][SRP notes]]" --as claude --yes
+
+# What did an agent do, and when? (entry tags carry @author)
+orgx find "" --tag @claude --json
+
+# What references this node?
+orgx backlinks <node-id> --json
+
+# Read today / another day
+orgx daily
+orgx daily --date -1d
+```
+
+Rules for agents working in a roam:
+- Journal completed work with `orgx daily ... --as <your-name> --yes` —
+  the daily is shared with the human; write facts, not chatter.
+- Link nodes by `[[id:...]]` (get IDs from node list / peek), never
+  by file path.
+- Reads never write. Writes require `--yes` and are visible in the
+  file the human reads.
+
+## JSON Contract
+
+Every `--json` output is a versioned envelope. Objects carry a
+`kind` (`orgx.<command path>.v1`, e.g. `orgx.node.list.v1`); list
+outputs are `{kind, count, items}`. Errors in `--json` mode are an
+`orgx.error.v1` envelope on stderr with `error.message` and, when
+known, a runnable `error.fix` — stdout stays data-only.
 
 ## Stable References
 

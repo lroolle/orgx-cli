@@ -393,12 +393,19 @@ pkg/
 
 ---
 
-## Not Roam
+## Our Own Roam (no sqlite)
 
-We don't integrate org-roam's sqlite database. Instead:
+orgx is now a roam itself — files are the database:
 
-- **Stable refs:** org's `:ID:` property (built-in)
-- **Cross-file search:** `orgx find` with glob patterns
-- **Structure awareness:** our parser extracts the hierarchy
+- **Nodes:** org files with a file-level `:ID:` drawer + `#+title`
+  (org-roam's own shape, so an existing org-roam dir just works);
+  `orgx node new/list`, `pkg/roam` does the head-only metadata scan
+- **Dailies:** `orgx daily` — one node per day; `--as <agent>` tags
+  entries `@author`, which is how agents live in the graph
+  (`orgx find --tag @claude` = the agent's audit trail)
+- **Graph:** `links`/`backlinks`; find/backlinks default `--in` to
+  the workspace root; headline-title links backlink like body links
+- **Still no org-roam sqlite:** stable refs are `:ID:`, search is a
+  recursive scan, structure comes from our parser
 
-org-roam is great for Emacs. orgx is for agents.
+org-roam is great for Emacs. orgx is the same graph, for agents too.

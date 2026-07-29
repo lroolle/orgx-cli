@@ -124,10 +124,17 @@ func TestFindCommand_JSON(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var results []FindResult
-	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+	var env struct {
+		Kind  string       `json:"kind"`
+		Items []FindResult `json:"items"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
+	if env.Kind != "orgx.find.v1" {
+		t.Fatalf("kind = %q", env.Kind)
+	}
+	results := env.Items
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -168,8 +175,11 @@ func TestFindCommand_Limit(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var results []FindResult
-	json.Unmarshal(stdout.Bytes(), &results)
+	var env struct {
+		Items []FindResult `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	results := env.Items
 
 	if len(results) != 3 {
 		t.Errorf("expected 3 results with limit, got %d", len(results))
@@ -194,8 +204,11 @@ func TestFindCommand_MultipleFiles(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var results []FindResult
-	json.Unmarshal(stdout.Bytes(), &results)
+	var env struct {
+		Items []FindResult `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	results := env.Items
 
 	if len(results) != 2 {
 		t.Errorf("expected 2 results from 2 files, got %d", len(results))
@@ -244,8 +257,11 @@ func TestFindCommand_GlobPattern(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var results []FindResult
-	json.Unmarshal(stdout.Bytes(), &results)
+	var env struct {
+		Items []FindResult `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	results := env.Items
 
 	if len(results) != 1 {
 		t.Errorf("expected 1 result from specific file, got %d", len(results))
@@ -273,8 +289,11 @@ func TestFindCommand_CombinedFilters(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var results []FindResult
-	json.Unmarshal(stdout.Bytes(), &results)
+	var env struct {
+		Items []FindResult `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	results := env.Items
 
 	if len(results) != 1 {
 		t.Errorf("expected 1 result with all filters, got %d", len(results))
