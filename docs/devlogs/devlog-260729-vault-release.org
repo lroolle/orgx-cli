@@ -1,0 +1,70 @@
+:PROPERTIES:
+:ID: devlog:260729-vault-release
+:END:
+#+TITLE: The Vault, Burnish, and v0.2.0
+#+DATE: [2026-07-29]
+#+FILETAGS: :devlog:vault:release:
+
+* Context
+
+Same-day follow-up to [[file:devlog-260729-roam-layer.org][the roam layer]].
+Direction from the owner: frame-level architecture, a built-in
+default vault layout inspired by Logseq (journals / pages / graph /
+whiteboards / flashcards / ...), then burnish and release.
+
+* What
+
+- PR #4 =51e3b84= — the vault:
+  - =pkg/roam/vault.go=: Layout, .orgx marker, FindVault (git-style
+    walk-up), LoadLayout (vault config > org-roam daily/ detection >
+    defaults), InitVault (idempotent, additive)
+  - =orgx init=: scaffolds journals/ pages/ whiteboards/ assets/ +
+    pages/contents.org + pages/flashcards.org seeds
+  - =orgx graph=: derived nodes + deduped id-link edges + BROKEN
+    references; text summary or orgx.graph.v1
+  - node new -> pages/, daily -> journals/ (layout-aware)
+  - ResolveRoot precedence: --root > -w (typo errors, no
+    fall-through) > discovered vault > default ws > fix error
+  - docs/ARCHITECTURE.md (four layers + invariants), docs/schema.md
+    (kind registry, additive-only policy)
+- PR #5 =135eaf4= — burnish: vault-first README, llms.txt, LICENSE
+  (MIT, was missing), goreleaser + release workflow (ihme-cli's
+  config), Makefile 0.2.0-dev
+- =f6b0765= — privacy: worg corpus test path was machine-local;
+  now opt-in via ORGX_WORG_FILE
+- Repo flipped PUBLIC; tag =v0.2.0=; goreleaser published 7 assets;
+  CI green throughout
+
+* Decisions
+
+| Decision | Alternatives | Rationale |
+|----------+--------------+-----------|
+| Graph is a command, not a graph/ dir | store graph.json in vault | derived data in a vault goes stale and lies; org-roam needs sqlite because Emacs is interactive — a CLI is not |
+| .orgx/ marker + walk-up discovery | workspace config only | locality beats global default; zero-config inside the vault |
+| Discovered vault outranks default workspace | reverse | being inside a vault is the stronger signal (the git model) |
+| whiteboards/ scaffolded, no tooling | omit until tooling exists | owner's proposed layout; ARCHITECTURE.md says "reserved" honestly |
+| flashcards = a page, not a dir | flashcards/ directory | one always-loaded page (the ihme pattern); a dir invites sprawl |
+| org-roam daily/ detected, never migrated | migrate on init | never rewrite a vault we did not create |
+
+* Risks
+
+| Risk | Mitigation | Status |
+|------+------------+--------|
+| Machine path in git history (pre-public commits) | reveals nothing beyond public ihme-cli commits (same author); tip fixed | Accepted |
+| Vault discovery changes behavior near stray .orgx dirs | marker must be a directory; -w/--root override | Open, low |
+| whiteboards/ reserved with no tooling | documented as reserved | Open |
+
+* Verification
+
+make check green at every step; built-binary smoke from a vault
+SUBDIRECTORY: init -> daily --as claude (broken link planted) ->
+node new -> node list -> graph reported "4 nodes, 0 edges, 1 broken
+links". Release verified: v0.2.0 assets (6 platforms + checksums),
+repo PUBLIC, CI + Release workflows green.
+
+* Next
+
+- Heading-level nodes; agent home pages; embedded agent (agentkit)
+- Whiteboards tooling (or a decision to cut the dir)
+- Broken-ref fixer (=orgx graph --fix=?); kind for ws/file/heading
+  subcommands documented as they stabilize

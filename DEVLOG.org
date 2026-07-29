@@ -78,11 +78,13 @@ Every command must support agent-friendly truncation:
 ** [#A] Priority: The Roam Grows
 - [X] Roam layer: node new/list, daily --as, workspace-as-graph
 - [X] Agentic contract: envelope kinds, error.fix, embedded skill, CI
+- [X] The vault: Logseq layout, orgx init, .orgx discovery (v0.2.0)
+- [X] =orgx graph= (nodes+edges+broken JSON)
+- [X] docs/schema.md + docs/ARCHITECTURE.md
+- [X] Release: goreleaser, v0.2.0 tagged, repo PUBLIC (2026-07-29)
 - [ ] Heading-level nodes (headings with :ID: as first-class nodes)
-- [ ] =orgx graph= (nodes+edges JSON)
-- [ ] docs/schema.md declaring the kinds
 - [ ] Agent homes -> embedded agent (agentkit) when substrate earns it
-- [ ] Release: goreleaser, v0.2.0, public repo (owner's call)
+- [ ] Whiteboards tooling, or the decision to cut the reserved dir
 
 ** [#B] Priority: Polish
 - [X] State change logging (LOGBOOK support)
@@ -102,6 +104,7 @@ Every command must support agent-friendly truncation:
 Detailed devlogs in =docs/devlogs/=. Newest first.
 
 ** 2026-07-29
+- [[file:docs/devlogs/devlog-260729-vault-release.org][The Vault, Burnish & v0.2.0]] - Logseq layout + orgx init, .orgx git-style discovery, derived graph w/ broken links, ARCHITECTURE/schema docs, goreleaser, repo PUBLIC, v0.2.0 shipped
 - [[file:docs/devlogs/devlog-260729-roam-layer.org][Roam Layer & Agentic-Native Contract]] - repo pushed to GitHub (PRs #1-#3, first CI); node/daily/--as, envelope kinds, error.fix, embedded skill + sync-guard
 
 ** 2026-01-08
