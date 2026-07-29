@@ -1,0 +1,32 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}{{if and .Vault.Name (ne .Title .Vault.Name)}} · {{.Vault.Name}}{{end}} · orgx</title>
+<link rel="stylesheet" href="/static/style.css">
+{{if .Base}}<base href="{{.Base}}">{{end}}
+</head>
+<body>
+<header>
+<nav>
+{{if .Vault.Name}}
+<a class="vault-name" href="/v/{{esc .Vault.Name}}/">{{.Vault.Name}}</a>
+<a href="/v/{{esc .Vault.Name}}/journals">journals</a>
+<a href="/v/{{esc .Vault.Name}}/pages">pages</a>
+<a href="/v/{{esc .Vault.Name}}/graph">graph</a>
+{{else}}
+<span class="vault-name">orgx</span>
+{{end}}
+{{if .Multi}}<a class="switch" href="/">vaults</a>{{end}}
+</nav>
+</header>
+<main>
+{{end}}
+
+{{define "foot"}}
+</main>
+<footer>orgx {{.Version}} · read-only preview · the files are the database</footer>
+</body>
+</html>
+{{end}}

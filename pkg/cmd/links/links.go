@@ -129,6 +129,19 @@ func collectLinks(nodes []ir.Node, refFilter, file string) []linkWithSource {
 	var links []linkWithSource
 
 	for _, n := range nodes {
+		// File-level preamble links belong to the file, not a
+		// heading — they only match when no section filter is set.
+		if l, ok := n.(*ir.Link); ok {
+			if refFilter == "" {
+				links = append(links, linkWithSource{
+					Source: file,
+					Target: l.Target,
+					Kind:   l.Kind,
+					Desc:   l.Desc,
+				})
+			}
+			continue
+		}
 		if h, ok := n.(*ir.Heading); ok {
 			if refFilter != "" && h.Ref != refFilter {
 				links = append(links, collectLinks(h.Children, refFilter, file)...)

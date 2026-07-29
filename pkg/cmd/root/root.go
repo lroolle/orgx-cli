@@ -18,6 +18,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/cmd/node"
 	"github.com/lroolle/orgx-cli/pkg/cmd/peek"
 	"github.com/lroolle/orgx-cli/pkg/cmd/promote"
+	"github.com/lroolle/orgx-cli/pkg/cmd/serve"
 	"github.com/lroolle/orgx-cli/pkg/cmd/set"
 	"github.com/lroolle/orgx-cli/pkg/cmd/skillscmd"
 	"github.com/lroolle/orgx-cli/pkg/cmd/vaultinit"
@@ -67,6 +68,7 @@ Use 'orgx <command> --help' for more information.`,
 		node.NewCmdNode(f),
 		daily.NewCmdDaily(f, nil),
 		graph.NewCmdGraph(f, nil),
+		serve.NewCmdServe(f, nil),
 	)
 
 	cmdutil.AddGroup(cmd, "Navigation",

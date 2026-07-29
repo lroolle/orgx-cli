@@ -1,0 +1,18 @@
+{{template "head" .}}
+<h1>pages</h1>
+<table class="index">
+<thead><tr><th>title</th><th>tags</th><th>author</th></tr></thead>
+<tbody>
+{{range .Rows}}
+<tr>
+<td><a href="/v/{{esc $.Vault.Name}}/node/{{esc .ID}}">{{.Title}}</a></td>
+<td>{{range .Tags}}<span class="pill">{{.}}</span>{{end}}</td>
+<td class="dim">{{.Author}}</td>
+</tr>
+{{else}}
+<tr><td colspan="3" class="empty">No pages yet — <code>orgx node new "title" --yes</code></td></tr>
+{{end}}
+</tbody>
+</table>
+{{if .Skipped}}<p class="dim">{{.Skipped}} org file(s) without a file-level :ID: are not nodes — <code>orgx id ensure</code></p>{{end}}
+{{template "foot" .}}

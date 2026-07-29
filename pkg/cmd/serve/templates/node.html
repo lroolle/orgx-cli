@@ -1,0 +1,28 @@
+{{template "head" .}}
+<article class="node">
+<h1>{{.Node.Title}}</h1>
+<p class="meta">
+{{range .Node.Tags}}<span class="pill">{{.}}</span>{{end}}
+{{if .Node.Author}}<span class="dim">by {{.Node.Author}}</span>{{end}}
+<span class="dim">{{.Rel}}</span>
+</p>
+{{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
+<div class="org">{{.HTML}}</div>
+</article>
+{{if .Broken}}
+<aside class="broken">
+<h2>broken links</h2>
+<ul>{{range .Broken}}<li><code>[[id:{{.Target}}]]</code> resolves to no node</li>{{end}}</ul>
+</aside>
+{{end}}
+<aside class="backlinks">
+<h2>backlinks{{if .Backlinks}} ({{len .Backlinks}}){{end}}</h2>
+{{if .Backlinks}}
+<ul>
+{{range .Backlinks}}<li><a href="/v/{{esc $.Vault.Name}}/node/{{esc .ID}}">{{.Title}}</a></li>{{end}}
+</ul>
+{{else}}
+<p class="dim">Nothing links here yet.</p>
+{{end}}
+</aside>
+{{template "foot" .}}

@@ -1,0 +1,16 @@
+{{template "head" .}}
+<h1>journals</h1>
+{{range .Months}}
+<section class="month">
+<h2>{{.Name}}</h2>
+<ul class="days">
+{{range .Days}}
+<li>{{if .ID}}<a href="/v/{{esc $.Vault.Name}}/node/{{esc .ID}}">{{.Date}}</a>{{else}}{{.Date}}{{end}}</li>
+{{end}}
+</ul>
+</section>
+{{else}}
+<p class="empty">No journals yet.</p>
+<p class="hint"><code>orgx daily "what happened" --yes</code></p>
+{{end}}
+{{template "foot" .}}

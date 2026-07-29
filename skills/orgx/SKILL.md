@@ -27,6 +27,7 @@ orgx
 ├── node new/list        # Pages: org-roam-compatible file nodes
 ├── daily [text]         # Journals; --as <agent> attributes entries
 ├── graph                # Derive nodes+edges+broken links (JSON)
+├── serve                # Read-only web preview (for humans, not you)
 ├── ls / links / backlinks
 ├── file parse/outline
 ├── heading list/view/set
@@ -216,8 +217,13 @@ orgx find "" --tag @claude --json
 # What references this node?
 orgx backlinks <node-id> --json
 
-# The whole graph: nodes, edges, broken links
+# The whole graph: nodes, edges, broken links (file-level body
+# links count — an org-roam page usually links from its preamble)
 orgx graph --json | jq '.broken'
+
+# Human preview (journals, pages, backlinks, graph view) — offer it
+# to the human, don't browse it yourself; the CLI is your interface
+orgx serve   # serves every workspace + the current vault, read-only
 
 # Read today / another day
 orgx daily

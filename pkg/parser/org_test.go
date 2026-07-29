@@ -356,3 +356,29 @@ func parseOrgString(t *testing.T, content string) *ir.Document {
 	}
 	return doc
 }
+
+func TestOrgParser_PreambleLinks(t *testing.T) {
+	doc := parseOrgString(t, `:PROPERTIES:
+:ID: file-id
+:END:
+#+title: A Page
+
+Body links to [[id:target-id][Target]] before any heading.
+
+* Heading
+Links to [[id:other-id][Other]] under the heading.
+`)
+
+	var preamble []*ir.Link
+	for _, n := range doc.Nodes {
+		if l, ok := n.(*ir.Link); ok {
+			preamble = append(preamble, l)
+		}
+	}
+	if len(preamble) != 1 {
+		t.Fatalf("want 1 file-level preamble link, got %d", len(preamble))
+	}
+	if preamble[0].Kind != ir.LinkKindID || preamble[0].Target != "id:target-id" {
+		t.Errorf("preamble link wrong: %+v", preamble[0])
+	}
+}

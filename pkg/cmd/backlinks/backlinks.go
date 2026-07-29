@@ -94,7 +94,7 @@ func backlinksRun(opts *BacklinksOptions) error {
 			continue
 		}
 
-		matches := findBacklinks(doc.Nodes, opts.Target, file)
+		matches := findBacklinks(doc.Nodes, opts.Target, file, doc.Meta.Title)
 		backlinks = append(backlinks, matches...)
 	}
 
@@ -105,10 +105,22 @@ func backlinksRun(opts *BacklinksOptions) error {
 	return printBacklinks(opts.IO, backlinks)
 }
 
-func findBacklinks(nodes []ir.Node, target, file string) []BacklinkOutput {
+func findBacklinks(nodes []ir.Node, target, file, docTitle string) []BacklinkOutput {
 	var backlinks []BacklinkOutput
 
 	for _, n := range nodes {
+		// A file-level preamble link backlinks as the file itself.
+		if l, ok := n.(*ir.Link); ok {
+			if matchesTarget(l, target, file) {
+				backlinks = append(backlinks, BacklinkOutput{
+					Source:      file,
+					SourceTitle: docTitle,
+					Target:      l.Target,
+					Desc:        l.Desc,
+				})
+			}
+			continue
+		}
 		if h, ok := n.(*ir.Heading); ok {
 			for _, l := range h.Links {
 				if matchesTarget(l, target, file) {
@@ -121,7 +133,7 @@ func findBacklinks(nodes []ir.Node, target, file string) []BacklinkOutput {
 				}
 			}
 
-			backlinks = append(backlinks, findBacklinks(h.Children, target, file)...)
+			backlinks = append(backlinks, findBacklinks(h.Children, target, file, docTitle)...)
 		}
 	}
 
