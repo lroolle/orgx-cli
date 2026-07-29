@@ -7,9 +7,11 @@ import (
 	"strings"
 
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
+	"github.com/lroolle/orgx-cli/pkg/config"
 	"github.com/lroolle/orgx-cli/pkg/iostreams"
 	"github.com/lroolle/orgx-cli/pkg/ir"
 	"github.com/lroolle/orgx-cli/pkg/parser"
+	"github.com/lroolle/orgx-cli/pkg/roam"
 	"github.com/spf13/cobra"
 )
 
@@ -43,8 +45,17 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Target = args[0]
 
+			// Default to the roam workspace when one is configured —
+			// backlinks are a graph question, and the workspace root
+			// is the graph. No workspace, no --in: current directory.
 			if opts.InDir == "" {
-				opts.InDir = "."
+				ws, _ := cmd.Flags().GetString("workspace")
+				rootFlag, _ := cmd.Flags().GetString("root")
+				if root, err := roam.ResolveRoot(config.LoadOrDefault(), ws, rootFlag); err == nil {
+					opts.InDir = root
+				} else {
+					opts.InDir = "."
+				}
 			}
 
 			if runF != nil {
@@ -54,7 +65,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.InDir, "in", "", "Directory to search (required)")
+	cmd.Flags().StringVar(&opts.InDir, "in", "", "Directory to search (default: roam workspace, else cwd)")
 	cmdutil.AddJSONFlags(cmd, &opts.Exporter, defaultFields)
 
 	return cmd

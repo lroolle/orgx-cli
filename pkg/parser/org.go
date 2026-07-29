@@ -127,7 +127,9 @@ func convertOrgHeadline(path string, h org.Headline, lines []string, tracker *li
 	scheduled, deadline, closed := extractScheduling(h.Children)
 	logbook := extractLogbook(h.Children)
 	bodyRaw := extractHeadlineBody(h)
-	links := extractOrgLinks(h.Children)
+	// Links live in the title too — journal entries are headings, and
+	// "* 14:30 worked on [[id:x]]" must backlink like body text does.
+	links := append(extractOrgLinks(h.Title), extractOrgLinks(h.Children)...)
 
 	lineNum := tracker.findHeadingLine(h.Lvl, title)
 

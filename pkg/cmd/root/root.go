@@ -5,6 +5,7 @@ import (
 
 	"github.com/lroolle/orgx-cli/pkg/cmd/backlinks"
 	"github.com/lroolle/orgx-cli/pkg/cmd/capture"
+	"github.com/lroolle/orgx-cli/pkg/cmd/daily"
 	"github.com/lroolle/orgx-cli/pkg/cmd/file"
 	"github.com/lroolle/orgx-cli/pkg/cmd/find"
 	"github.com/lroolle/orgx-cli/pkg/cmd/get"
@@ -13,6 +14,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/cmd/links"
 	"github.com/lroolle/orgx-cli/pkg/cmd/log"
 	"github.com/lroolle/orgx-cli/pkg/cmd/ls"
+	"github.com/lroolle/orgx-cli/pkg/cmd/node"
 	"github.com/lroolle/orgx-cli/pkg/cmd/peek"
 	"github.com/lroolle/orgx-cli/pkg/cmd/promote"
 	"github.com/lroolle/orgx-cli/pkg/cmd/set"
@@ -55,6 +57,11 @@ Use 'orgx <command> --help' for more information.`,
 		capture.NewCmdCapture(f, nil),
 		promote.NewCmdPromote(f, nil),
 		log.NewCmdLog(f, nil),
+	)
+
+	cmdutil.AddGroup(cmd, "Roam",
+		node.NewCmdNode(f),
+		daily.NewCmdDaily(f, nil),
 	)
 
 	cmdutil.AddGroup(cmd, "Navigation",

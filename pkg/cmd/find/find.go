@@ -13,6 +13,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/ir"
 	"github.com/lroolle/orgx-cli/pkg/orgtime"
 	"github.com/lroolle/orgx-cli/pkg/parser"
+	"github.com/lroolle/orgx-cli/pkg/roam"
 	"github.com/spf13/cobra"
 )
 
@@ -69,8 +70,16 @@ Examples:
 				opts.Query = args[0]
 			}
 
+			// Default to the roam workspace when one is configured —
+			// same rule as backlinks: the workspace root is the graph.
 			if opts.In == "" {
-				opts.In = "."
+				ws, _ := cmd.Flags().GetString("workspace")
+				rootFlag, _ := cmd.Flags().GetString("root")
+				if root, err := roam.ResolveRoot(config.LoadOrDefault(), ws, rootFlag); err == nil {
+					opts.In = root
+				} else {
+					opts.In = "."
+				}
 			}
 
 			if err := parseDateFilters(opts); err != nil {
@@ -193,9 +202,22 @@ func findRun(opts *FindOptions) error {
 }
 
 func findFiles(pattern string) ([]string, error) {
-	info, err := os.Stat(pattern)
-	if err == nil && info.IsDir() {
-		pattern = filepath.Join(pattern, "*.org")
+	// A directory means the whole tree — dailies and subtopics live
+	// in subdirectories, and a graph search that silently skips them
+	// reads as "no matches" when the data is simply one level down.
+	if info, err := os.Stat(pattern); err == nil && info.IsDir() {
+		var files []string
+		walkErr := filepath.Walk(pattern, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			switch strings.ToLower(filepath.Ext(path)) {
+			case ".org", ".md":
+				files = append(files, path)
+			}
+			return nil
+		})
+		return files, walkErr
 	}
 
 	matches, err := filepath.Glob(pattern)
