@@ -312,9 +312,11 @@ func TestOrgParser_DocType(t *testing.T) {
 }
 
 func TestOrgParser_RealWorgFile(t *testing.T) {
-	worgPath := "/Users/eric/wrk/src/github.com/lroolle/WIP/251219_orgx-init/reference/org-mode/worg/todo.org"
-	if _, err := os.Stat(worgPath); os.IsNotExist(err) {
-		t.Skip("worg repository not available")
+	// Opt-in corpus test: point ORGX_WORG_FILE at a real worg org
+	// file (e.g. worg/todo.org) to parse something battle-hardened.
+	worgPath := os.Getenv("ORGX_WORG_FILE")
+	if worgPath == "" {
+		t.Skip("set ORGX_WORG_FILE to run the worg corpus test")
 	}
 
 	doc, err := ParseFile(worgPath)
