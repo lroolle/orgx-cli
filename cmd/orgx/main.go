@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/lroolle/orgx-cli/pkg/cmd/factory"
 	"github.com/lroolle/orgx-cli/pkg/cmd/root"
@@ -21,13 +23,21 @@ func run() int {
 	cmd := root.NewCmdRoot(f)
 
 	if err := cmd.Execute(); err != nil {
-		if cmdutil.IsFlagError(err) {
-			fmt.Fprintln(f.IOStreams.ErrOut, err)
-			cmd.Usage()
+		if err == cmdutil.SilentError || err == cmdutil.CancelError {
 			return 1
 		}
-		if err != cmdutil.SilentError && err != cmdutil.CancelError {
-			fmt.Fprintln(f.IOStreams.ErrOut, err)
+		// In --json mode errors are an envelope too (orgx.error.v1,
+		// on stderr — stdout stays data-only), so an agent gets a
+		// machine-readable message and, when known, the fix.
+		if slices.Contains(os.Args[1:], "--json") {
+			enc := json.NewEncoder(f.IOStreams.ErrOut)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(cmdutil.NewErrorEnvelope(err))
+			return 1
+		}
+		fmt.Fprintln(f.IOStreams.ErrOut, err)
+		if cmdutil.IsFlagError(err) {
+			cmd.Usage()
 		}
 		return 1
 	}

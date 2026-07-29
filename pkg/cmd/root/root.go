@@ -18,6 +18,7 @@ import (
 	"github.com/lroolle/orgx-cli/pkg/cmd/peek"
 	"github.com/lroolle/orgx-cli/pkg/cmd/promote"
 	"github.com/lroolle/orgx-cli/pkg/cmd/set"
+	"github.com/lroolle/orgx-cli/pkg/cmd/skillscmd"
 	"github.com/lroolle/orgx-cli/pkg/cmd/ws"
 	"github.com/lroolle/orgx-cli/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -84,6 +85,10 @@ Use 'orgx <command> --help' for more information.`,
 
 	cmdutil.AddGroup(cmd, "Workspace",
 		ws.NewCmdWs(f),
+	)
+
+	cmdutil.AddGroup(cmd, "Agent integration",
+		skillscmd.NewCmdSkills(f),
 	)
 
 	cmd.AddCommand(newCmdVersion(f))

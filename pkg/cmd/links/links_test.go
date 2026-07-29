@@ -60,10 +60,13 @@ func TestLinksCommand_JSON(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var links []LinkOutput
-	if err := json.Unmarshal(stdout.Bytes(), &links); err != nil {
+	var env struct {
+		Items []LinkOutput `json:"items"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
+	links := env.Items
 
 	if len(links) != 1 {
 		t.Fatalf("expected 1 link, got %d", len(links))
@@ -94,8 +97,11 @@ func TestLinksCommand_KindFilter(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var links []LinkOutput
-	json.Unmarshal(stdout.Bytes(), &links)
+	var env struct {
+		Items []LinkOutput `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	links := env.Items
 
 	if len(links) != 1 {
 		t.Errorf("expected 1 file link, got %d", len(links))
@@ -119,8 +125,11 @@ func TestLinksCommand_Directory(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var links []LinkOutput
-	json.Unmarshal(stdout.Bytes(), &links)
+	var env struct {
+		Items []LinkOutput `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	links := env.Items
 
 	if len(links) != 2 {
 		t.Errorf("expected 2 links from 2 files, got %d", len(links))

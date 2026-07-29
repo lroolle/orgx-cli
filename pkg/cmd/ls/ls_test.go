@@ -53,10 +53,13 @@ func TestLsCommand_JSON(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var files []FileInfo
-	if err := json.Unmarshal(stdout.Bytes(), &files); err != nil {
+	var env struct {
+		Items []FileInfo `json:"items"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
+	files := env.Items
 
 	if len(files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(files))
@@ -87,8 +90,11 @@ func TestLsCommand_Limit(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var files []FileInfo
-	json.Unmarshal(stdout.Bytes(), &files)
+	var env struct {
+		Items []FileInfo `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	files := env.Items
 
 	if len(files) != 3 {
 		t.Errorf("expected 3 files with limit, got %d", len(files))
@@ -112,8 +118,11 @@ func TestLsCommand_SortByLines(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var files []FileInfo
-	json.Unmarshal(stdout.Bytes(), &files)
+	var env struct {
+		Items []FileInfo `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	files := env.Items
 
 	if len(files) < 2 {
 		t.Fatalf("expected 2 files, got %d", len(files))
@@ -142,8 +151,11 @@ func TestLsCommand_Recursive(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var files []FileInfo
-	json.Unmarshal(stdout.Bytes(), &files)
+	var env struct {
+		Items []FileInfo `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	files := env.Items
 
 	if len(files) != 2 {
 		t.Errorf("expected 2 files with recursive, got %d", len(files))

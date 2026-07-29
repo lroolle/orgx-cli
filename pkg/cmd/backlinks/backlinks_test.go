@@ -52,10 +52,17 @@ func TestBacklinksCommand_JSON(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var backlinks []BacklinkOutput
-	if err := json.Unmarshal(stdout.Bytes(), &backlinks); err != nil {
+	var env struct {
+		Kind  string           `json:"kind"`
+		Items []BacklinkOutput `json:"items"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
+	if env.Kind != "orgx.backlinks.v1" {
+		t.Fatalf("kind = %q", env.Kind)
+	}
+	backlinks := env.Items
 
 	if len(backlinks) != 1 {
 		t.Fatalf("expected 1 backlink, got %d", len(backlinks))
@@ -102,8 +109,11 @@ func TestBacklinksCommand_IDLinks(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	var backlinks []BacklinkOutput
-	json.Unmarshal(stdout.Bytes(), &backlinks)
+	var env struct {
+		Items []BacklinkOutput `json:"items"`
+	}
+	json.Unmarshal(stdout.Bytes(), &env)
+	backlinks := env.Items
 
 	if len(backlinks) != 1 {
 		t.Errorf("expected 1 ID backlink, got %d", len(backlinks))
